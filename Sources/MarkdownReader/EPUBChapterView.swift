@@ -15,7 +15,11 @@ struct EPUBChapterView: NSViewRepresentable {
     let lineHeight: Double
     let scrollFragment: String?
     let scrollRequest: Int
+    let annotations: [EPUBAnnotation]
+    let annotationJumpID: String?
+    let annotationJumpRequest: Int
     let onNavigateChapter: (Int) -> Void
+    let onTextSelection: (EPUBTextAnchor?) -> Void
     let onBodyChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onBodyChange: onBodyChange) }
@@ -25,6 +29,7 @@ struct EPUBChapterView: NSViewRepresentable {
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "epubBodyChanged")
+        configuration.userContentController.add(context.coordinator, name: "epubSelectionChanged")
         let editorScript = WKUserScript(source: """
         (() => {
           const enable = () => {
@@ -39,6 +44,8 @@ struct EPUBChapterView: NSViewRepresentable {
         })();
         """, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         configuration.userContentController.addUserScript(editorScript)
+        let selectionScript = WKUserScript(source: Self.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        configuration.userContentController.addUserScript(selectionScript)
         let webView = EPUBReaderWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
@@ -54,6 +61,7 @@ struct EPUBChapterView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.onBodyChange = onBodyChange
+        context.coordinator.onTextSelection = onTextSelection
         context.coordinator.editable = editable
         (webView as? EPUBReaderWebView)?.onNavigateChapter = onNavigateChapter
         (webView as? EPUBReaderWebView)?.allowsChapterNavigation = !editable
@@ -65,6 +73,7 @@ struct EPUBChapterView: NSViewRepresentable {
         if context.coordinator.renderKey != renderKey {
             context.coordinator.renderKey = renderKey
             context.coordinator.hasLoadedPage = false
+            context.coordinator.lastAnnotations = nil
             let previewURL = chapter.fileURL.deletingLastPathComponent()
                 .appendingPathComponent(".mdstudio-preview-\(UUID().uuidString).html")
             do {
@@ -76,6 +85,8 @@ struct EPUBChapterView: NSViewRepresentable {
             }
         }
         context.coordinator.editable = editable
+        context.coordinator.setAnnotations(annotations, jumpID: annotationJumpID,
+                                          jumpRequest: annotationJumpRequest, chapterHref: chapter.href)
         webView.evaluateJavaScript("document.body?.style.setProperty('max-width','\(Int(width))px')")
         webView.evaluateJavaScript(Self.typographyUpdateScript(bodySize: bodySize, bodyFamily: bodyFamily,
                                                                 bodyColorHex: bodyColorHex,
@@ -87,6 +98,50 @@ struct EPUBChapterView: NSViewRepresentable {
             context.coordinator.scrollToPendingFragment()
         }
     }
+
+    private static let selectionScript = """
+    (() => {
+      const collect = () => {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || !selection.rangeCount) {
+          window.webkit.messageHandlers.epubSelectionChanged.postMessage(null);
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            return node.parentElement?.closest('script,style,head,[data-mdstudio-annotation-id]')
+              ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        const nodes = []; let text = ''; let node;
+        while ((node = walker.nextNode())) { nodes.push({node, start:text.length}); text += node.nodeValue || ''; }
+        const offsetOf = (target, offset) => {
+          const item = nodes.find(entry => entry.node === target);
+          return item ? item.start + offset : -1;
+        };
+        let start = offsetOf(range.startContainer, range.startOffset);
+        let end = offsetOf(range.endContainer, range.endOffset);
+        if (start < 0 || end <= start) {
+          window.webkit.messageHandlers.epubSelectionChanged.postMessage(null); return;
+        }
+        let quote = text.slice(start, end);
+        const leading = quote.length - quote.trimStart().length;
+        quote = quote.trim(); start += leading;
+        if (!quote) { window.webkit.messageHandlers.epubSelectionChanged.postMessage(null); return; }
+        window.webkit.messageHandlers.epubSelectionChanged.postMessage({
+          quote,
+          prefix: text.slice(Math.max(0, start - 48), start),
+          suffix: text.slice(start + quote.length, start + quote.length + 48)
+        });
+      };
+      let timer;
+      const schedule = () => { clearTimeout(timer); timer = setTimeout(collect, 90); };
+      document.addEventListener('mouseup', schedule);
+      document.addEventListener('keyup', schedule);
+      document.addEventListener('selectionchange', schedule);
+    })();
+    """
 
     private static func readerHTML(chapter: EPUBChapter, width: Double, bodySize: Double,
                                    bodyFamily: String, bodyColorHex: String,
@@ -166,6 +221,7 @@ struct EPUBChapterView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var onBodyChange: (String) -> Void
+        var onTextSelection: (EPUBTextAnchor?) -> Void = { _ in }
         var renderKey: String?
         var editable = false
         var pendingFragment: String?
@@ -173,12 +229,29 @@ struct EPUBChapterView: NSViewRepresentable {
         var hasLoadedPage = false
         var pendingPreviewURL: URL?
         var activePreviewURL: URL?
+        var annotations: [EPUBAnnotation] = []
+        var lastAnnotations: [EPUBAnnotation]?
+        var lastAppliedEditable: Bool?
+        var annotationJumpID: String?
+        var annotationJumpRequest = -1
+        var chapterHref = ""
         weak var webView: WKWebView?
         init(onBodyChange: @escaping (String) -> Void) { self.onBodyChange = onBodyChange }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard editable, let body = message.body as? String else { return }
-            onBodyChange(body)
+            if message.name == "epubBodyChanged" {
+                guard editable, let body = message.body as? String else { return }
+                onBodyChange(body)
+            } else if message.name == "epubSelectionChanged" {
+                guard !editable else { onTextSelection(nil); return }
+                guard let value = message.body as? [String: String],
+                      let quote = value["quote"], !quote.isEmpty else {
+                    onTextSelection(nil)
+                    return
+                }
+                onTextSelection(EPUBTextAnchor(quote: quote, prefix: value["prefix"] ?? "",
+                                               suffix: value["suffix"] ?? ""))
+            }
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -189,7 +262,95 @@ struct EPUBChapterView: NSViewRepresentable {
             activePreviewURL = pendingPreviewURL
             pendingPreviewURL = nil
             webView.evaluateJavaScript("if(document.body) document.body.contentEditable = '\(editable ? "true" : "false")'")
+            lastAnnotations = nil
+            applyAnnotations()
             scrollToPendingFragment()
+        }
+
+        func setAnnotations(_ value: [EPUBAnnotation], jumpID: String?, jumpRequest: Int, chapterHref: String) {
+            let changed = lastAnnotations != value || annotationJumpRequest != jumpRequest ||
+                self.chapterHref != chapterHref || lastAppliedEditable != editable
+            annotations = value
+            annotationJumpID = jumpID
+            annotationJumpRequest = jumpRequest
+            self.chapterHref = chapterHref
+            if changed { applyAnnotations() }
+        }
+
+        func applyAnnotations() {
+            guard hasLoadedPage else { return }
+            if editable {
+                webView?.evaluateJavaScript("document.querySelectorAll('[data-mdstudio-annotation-id]').forEach(mark=>{const parent=mark.parentNode;while(mark.firstChild)parent.insertBefore(mark.firstChild,mark);parent.removeChild(mark)})")
+                lastAnnotations = annotations
+                lastAppliedEditable = true
+                return
+            }
+            guard
+                  let data = try? JSONSerialization.data(withJSONObject: annotations.map { item in
+                      ["id": item.id, "href": item.chapterHref, "quote": item.anchor.quote,
+                       "prefix": item.anchor.prefix, "suffix": item.anchor.suffix,
+                       "note": item.note, "color": item.colorHex]
+                  }, options: [.fragmentsAllowed]),
+                  let json = String(data: data, encoding: .utf8),
+                  let jumpData = try? JSONSerialization.data(withJSONObject: annotationJumpID ?? NSNull(), options: [.fragmentsAllowed]),
+                  let jumpJSON = String(data: jumpData, encoding: .utf8) else { return }
+            lastAnnotations = annotations
+            lastAppliedEditable = false
+            let currentHref = (try? JSONSerialization.data(withJSONObject: [chapterHref], options: [.fragmentsAllowed]))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "[\"\"]"
+            webView?.evaluateJavaScript("""
+            (() => {
+              const items = \(json), href = (\(currentHref))[0], jumpID = \(jumpJSON);
+              document.querySelectorAll('[data-mdstudio-annotation-id]').forEach(mark => {
+                const parent = mark.parentNode;
+                while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+                parent.removeChild(mark);
+              });
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                acceptNode(node) {
+                  return node.parentElement?.closest('script,style,head,[data-mdstudio-annotation-id]')
+                    ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+                }
+              });
+              const nodes = []; let full = ''; let node;
+              while ((node = walker.nextNode())) { nodes.push({node, start:full.length}); full += node.nodeValue || ''; }
+              const candidates = [];
+              for (const item of items.filter(a => a.href === href && a.quote)) {
+                let best = -1, bestScore = -1;
+                for (let at = full.indexOf(item.quote); at >= 0; at = full.indexOf(item.quote, at + 1)) {
+                  const before = full.slice(Math.max(0, at - item.prefix.length), at);
+                  const after = full.slice(at + item.quote.length, at + item.quote.length + item.suffix.length);
+                  let score = 0;
+                  for (let i=1; i<=Math.min(before.length,item.prefix.length); i++) {
+                    if (before.slice(-i) === item.prefix.slice(-i)) score = i; else break;
+                  }
+                  for (let i=1; i<=Math.min(after.length,item.suffix.length); i++) {
+                    if (after.slice(0,i) === item.suffix.slice(0,i)) score += i; else break;
+                  }
+                  if (score > bestScore) { best=at; bestScore=score; }
+                }
+                if (best >= 0) candidates.push({item,start:best,end:best+item.quote.length});
+              }
+              candidates.sort((a,b) => b.start-a.start);
+              for (const candidate of candidates) {
+                const segments = nodes.map(entry => {
+                  const from = Math.max(candidate.start, entry.start);
+                  const to = Math.min(candidate.end, entry.start + entry.node.length);
+                  return to > from ? {node:entry.node, from:from-entry.start, to:to-entry.start} : null;
+                }).filter(Boolean).reverse();
+                for (const segment of segments) {
+                  const range = document.createRange();
+                  range.setStart(segment.node,segment.from); range.setEnd(segment.node,segment.to);
+                  const mark = document.createElement('mark');
+                  mark.dataset.mdstudioAnnotationId = candidate.item.id;
+                  mark.title = candidate.item.note || candidate.item.quote;
+                  mark.style.cssText = 'background:'+candidate.item.color+';border-radius:2px;padding:0 1px;color:inherit';
+                  mark.appendChild(range.extractContents()); range.insertNode(mark);
+                }
+              }
+              if (jumpID) document.querySelector('[data-mdstudio-annotation-id="'+jumpID+'"]')?.scrollIntoView({block:'center',behavior:'smooth'});
+            })()
+            """)
         }
 
         func scrollToPendingFragment() {

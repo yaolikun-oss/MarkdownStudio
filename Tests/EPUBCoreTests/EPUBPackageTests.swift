@@ -76,6 +76,28 @@ struct EPUBPackageTests {
         #expect(FileManager.default.fileExists(atPath: source.appendingPathComponent("META-INF/container.xml").path))
     }
 
+    @Test func persistsAnnotationsInASidecarWithoutChangingTheEPUB() throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let book = temp.appendingPathComponent("book.epub")
+        let originalData = Data("book stays unchanged".utf8)
+        try originalData.write(to: book)
+        let anchor = EPUBTextAnchor(quote: "selected passage", prefix: "before ", suffix: " after")
+        let annotation = EPUBAnnotation(chapterHref: "Text/chapter.xhtml", anchor: anchor,
+                                        note: "remember this", colorHex: "#FFE58A")
+        try EPUBAnnotationStore.save([annotation], for: book)
+        let loaded = try EPUBAnnotationStore.load(for: book)
+        #expect(loaded.count == 1)
+        #expect(loaded[0].id == annotation.id)
+        #expect(loaded[0].chapterHref == annotation.chapterHref)
+        #expect(loaded[0].anchor == anchor)
+        #expect(loaded[0].note == annotation.note)
+        #expect(loaded[0].colorHex == annotation.colorHex)
+        #expect(try Data(contentsOf: book) == originalData)
+        #expect(FileManager.default.fileExists(atPath: temp.appendingPathComponent("book.annotations.json").path))
+    }
+
     @Test func fallsBackToSpineWhenNavigationIsMissing() throws {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)

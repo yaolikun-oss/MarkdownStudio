@@ -67,6 +67,12 @@ struct MarkdownReaderApp: App {
                 Button("恢复三栏布局") { ReaderActions.restoreEPUBNotebookLayout() }
                     .keyboardShortcut("0", modifiers: [.command, .shift])
             }
+            CommandMenu("EPUB 注释") {
+                Button("为所选文字添加注释…") { ReaderActions.addEPUBAnnotation() }
+                    .keyboardShortcut("m", modifiers: [.command, .shift])
+                Button("查看注释列表…") { ReaderActions.showEPUBAnnotations() }
+                    .keyboardShortcut("m", modifiers: [.command, .option])
+            }
             CommandMenu("语法") {
                 ForEach(1...6, id: \.self) { level in
                     Button("标题 \(level)") { ReaderActions.applyHeadingLevel(level) }
@@ -161,6 +167,8 @@ enum ReaderActions {
     static var setEPUBNotebookLayoutHandler: ((EPUBNotebookLayout) -> Void)?
     static var maximizeEPUBNotebookPaneHandler: ((EPUBNotebookPane) -> Void)?
     static var restoreEPUBNotebookLayoutHandler: (() -> Void)?
+    static var addEPUBAnnotationHandler: (() -> Void)?
+    static var showEPUBAnnotationsHandler: (() -> Void)?
     static var saveHandler: (() -> Void)?
     static var insertTableHandler: (() -> Void)?
     static var insertHorizontalRuleHandler: (() -> Void)?
@@ -190,6 +198,8 @@ enum ReaderActions {
     static func setEPUBNotebookLayout(_ layout: EPUBNotebookLayout) { setEPUBNotebookLayoutHandler?(layout) }
     static func maximizeEPUBNotebookPane(_ pane: EPUBNotebookPane) { maximizeEPUBNotebookPaneHandler?(pane) }
     static func restoreEPUBNotebookLayout() { restoreEPUBNotebookLayoutHandler?() }
+    static func addEPUBAnnotation() { addEPUBAnnotationHandler?() }
+    static func showEPUBAnnotations() { showEPUBAnnotationsHandler?() }
     static func save() { saveHandler?() }
     static func insertTable() { insertTableHandler?() }
     static func insertHorizontalRule() { insertHorizontalRuleHandler?() }
@@ -301,6 +311,12 @@ struct ReaderView: View {
     @State private var epubHasChanges = false
     @State private var epubTargetFragment: String?
     @State private var epubNavigationRequest = 0
+    @State private var epubAnnotations: [EPUBAnnotation] = []
+    @State private var epubSelection: EPUBTextAnchor?
+    @State private var showEPUBAnnotationComposer = false
+    @State private var showEPUBAnnotationList = false
+    @State private var epubAnnotationJumpID: String?
+    @State private var epubAnnotationJumpRequest = 0
     @State private var pendingEPUBURL: URL?
     @State private var showEPUBModeChoice = false
     @State private var isEPUBNotebook = false
@@ -348,6 +364,17 @@ struct ReaderView: View {
             TableInsertionSheet { cells, formatted in
                 insertTable(cells: cells, formatted: formatted)
             }
+        }
+        .sheet(isPresented: $showEPUBAnnotationComposer) {
+            if let epubSelection {
+                EPUBAnnotationComposer(anchor: epubSelection) { note, colorHex in
+                    addEPUBAnnotation(note: note, colorHex: colorHex)
+                }
+            }
+        }
+        .sheet(isPresented: $showEPUBAnnotationList) {
+            EPUBAnnotationListSheet(annotations: epubAnnotations, onSelect: jumpToEPUBAnnotation,
+                                    onDelete: deleteEPUBAnnotation)
         }
         .alert("文档有未保存的修改", isPresented: $showUnsavedAlert) {
             Button("保存") {
@@ -434,6 +461,14 @@ struct ReaderView: View {
                 maximizedNotebookPane = pane
             }
             ReaderActions.restoreEPUBNotebookLayoutHandler = { maximizedNotebookPane = nil }
+            ReaderActions.addEPUBAnnotationHandler = {
+                guard epubDocument != nil, epubSelection != nil else { return }
+                showEPUBAnnotationComposer = true
+            }
+            ReaderActions.showEPUBAnnotationsHandler = {
+                guard epubDocument != nil else { return }
+                showEPUBAnnotationList = true
+            }
             ReaderActions.saveHandler = { _ = saveDocument() }
             ReaderActions.closeFileHandler = closeFile
             ReaderActions.closeFolderHandler = closeFolder
@@ -525,6 +560,8 @@ struct ReaderView: View {
                                 if let target = epubDocument.navigationTarget(for: item) {
                                     epubCurrentChapter = target.chapterIndex
                                     epubTargetFragment = target.fragment
+                                    epubSelection = nil
+                                    epubAnnotationJumpID = nil
                                     epubNavigationRequest += 1
                                 }
                             } label: {
@@ -597,6 +634,8 @@ struct ReaderView: View {
                 Button {
                     epubCurrentChapter = max(0, epubCurrentChapter - 1)
                     epubTargetFragment = nil
+                    epubSelection = nil
+                    epubAnnotationJumpID = nil
                     epubNavigationRequest += 1
                 } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.plain)
@@ -608,11 +647,27 @@ struct ReaderView: View {
                 Button {
                     epubCurrentChapter = min(epubDocument.chapters.count - 1, epubCurrentChapter + 1)
                     epubTargetFragment = nil
+                    epubSelection = nil
+                    epubAnnotationJumpID = nil
                     epubNavigationRequest += 1
                 } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.plain)
                 .disabled(epubCurrentChapter >= epubDocument.chapters.count - 1)
                 .help("下一页（→）")
+                Button { showEPUBAnnotationComposer = true } label: {
+                    Image(systemName: "highlighter").font(.system(size: 13)).frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .disabled(epubSelection == nil)
+                .help(epubSelection == nil ? "先在原书中选中文字，再添加注释（⇧⌘M）" : "为所选文字添加注释（⇧⌘M）")
+                Button { showEPUBAnnotationList = true } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "text.book.closed").font(.system(size: 12))
+                        if !epubAnnotations.isEmpty { Text("\(epubAnnotations.count)").font(.system(size: 10, design: .rounded)) }
+                    }.frame(height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("查看 EPUB 注释（⌥⌘M）")
             }
             HStack(spacing: 7) {
                 Image(systemName: "rectangle.center.inset.filled").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -861,13 +916,17 @@ struct ReaderView: View {
                         backgroundColorHex: readerBackgroundHex,
                         lineHeight: lineHeight,
                         scrollFragment: epubTargetFragment, scrollRequest: epubNavigationRequest,
+                        annotations: epubAnnotations, annotationJumpID: epubAnnotationJumpID,
+                        annotationJumpRequest: epubAnnotationJumpRequest,
                         onNavigateChapter: { offset in
             let target = epubCurrentChapter + offset
             guard document.chapters.indices.contains(target) else { return }
             epubCurrentChapter = target
             epubTargetFragment = nil
+            epubSelection = nil
+            epubAnnotationJumpID = nil
             epubNavigationRequest += 1
-        }) { body in
+        }, onTextSelection: { epubSelection = $0 }) { body in
             do {
                 try document.replaceChapterBody(at: epubCurrentChapter, with: body)
                 epubHasChanges = true
@@ -876,6 +935,56 @@ struct ReaderView: View {
             }
         }
         .background(Color(hex: readerBackgroundHex))
+    }
+
+    private func loadEPUBAnnotations(for document: EPUBPackageDocument) {
+        do {
+            epubAnnotations = try EPUBAnnotationStore.load(for: document.sourceURL)
+        } catch {
+            epubAnnotations = []
+            saveError = "无法读取注释文件：\(error.localizedDescription)"
+        }
+        epubSelection = nil
+        epubAnnotationJumpID = nil
+        epubAnnotationJumpRequest += 1
+    }
+
+    private func addEPUBAnnotation(note: String, colorHex: String) {
+        guard let document = epubDocument, let anchor = epubSelection,
+              document.chapters.indices.contains(epubCurrentChapter) else { return }
+        let annotation = EPUBAnnotation(chapterHref: document.chapters[epubCurrentChapter].href,
+                                        anchor: anchor, note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                                        colorHex: colorHex)
+        let updated = epubAnnotations + [annotation]
+        do {
+            try EPUBAnnotationStore.save(updated, for: document.sourceURL)
+            epubAnnotations = updated
+            epubSelection = nil
+        } catch {
+            saveError = "无法保存注释：\(error.localizedDescription)"
+        }
+    }
+
+    private func deleteEPUBAnnotation(_ annotation: EPUBAnnotation) {
+        guard let document = epubDocument else { return }
+        let updated = epubAnnotations.filter { $0.id != annotation.id }
+        do {
+            try EPUBAnnotationStore.save(updated, for: document.sourceURL)
+            epubAnnotations = updated
+        } catch {
+            saveError = "无法保存注释：\(error.localizedDescription)"
+        }
+    }
+
+    private func jumpToEPUBAnnotation(_ annotation: EPUBAnnotation) {
+        guard let document = epubDocument,
+              let chapter = document.chapters.firstIndex(where: { $0.href == annotation.chapterHref }) else { return }
+        epubCurrentChapter = chapter
+        epubTargetFragment = nil
+        epubAnnotationJumpID = annotation.id
+        epubAnnotationJumpRequest += 1
+        epubNavigationRequest += 1
+        epubSelection = nil
     }
 
     private var editorPane: some View {
@@ -1052,7 +1161,9 @@ struct ReaderView: View {
         guard let url = pendingEPUBURL else { return }
         pendingEPUBURL = nil
         do {
-            epubDocument = try EPUBPackageDocument.open(url)
+            let document = try EPUBPackageDocument.open(url)
+            epubDocument = document
+            loadEPUBAnnotations(for: document)
             isEPUBNotebook = false
             maximizedNotebookPane = nil
             epubCurrentChapter = 0
@@ -1074,7 +1185,9 @@ struct ReaderView: View {
         pendingEPUBURL = nil
         let noteURL = url.deletingPathExtension().appendingPathExtension("md")
         do {
-            epubDocument = try EPUBPackageDocument.open(url)
+            let document = try EPUBPackageDocument.open(url)
+            epubDocument = document
+            loadEPUBAnnotations(for: document)
         } catch {
             saveError = error.localizedDescription
             return
