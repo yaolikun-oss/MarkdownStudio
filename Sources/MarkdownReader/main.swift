@@ -275,6 +275,9 @@ struct ReaderView: View {
     @AppStorage("reader.strongColor") private var strongColorHex = "#A5563A"
     @AppStorage("reader.strongSize") private var strongSize = 15.0
     @AppStorage("reader.strongFamily") private var strongFamily = "系统默认"
+    @AppStorage("reader.annotationFontSize") private var annotationFontSize = 11.0
+    @AppStorage("reader.annotationFontFamily") private var annotationFontFamily = "系统默认"
+    @AppStorage("reader.annotationTextColor") private var annotationTextColorHex = "#777777"
     @AppStorage("reader.headingStyles") private var headingStylesData = Data()
     @AppStorage("reader.outlineColors") private var outlineColorsData = Data()
     @AppStorage("reader.systemFontMigrationV1") private var systemFontMigrationDone = false
@@ -313,6 +316,7 @@ struct ReaderView: View {
     @State private var epubNavigationRequest = 0
     @State private var epubAnnotations: [EPUBAnnotation] = []
     @State private var epubSelection: EPUBTextAnchor?
+    @State private var epubEditingAnnotation: EPUBAnnotation?
     @State private var showEPUBAnnotationComposer = false
     @State private var showEPUBAnnotationList = false
     @State private var epubAnnotationJumpID: String?
@@ -346,6 +350,7 @@ struct ReaderView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .coordinateSpace(name: "mainWindow")
         .preferredColorScheme(.light)
         .sheet(isPresented: $showSettings) {
             SettingsView(readerWidth: $readerWidth, bodyColorHex: $bodyColorHex, readerBackgroundHex: $readerBackgroundHex,
@@ -353,7 +358,9 @@ struct ReaderView: View {
                          strongSize: $strongSize, strongFamily: $strongFamily,
                          headingStylesData: $headingStylesData, bodySize: $bodySize,
                          bodyFamily: $bodyFamily, lineHeight: $lineHeight,
-                         paragraphSpacing: $paragraphSpacing, outlineColorsData: $outlineColorsData)
+                         paragraphSpacing: $paragraphSpacing, outlineColorsData: $outlineColorsData,
+                         annotationFontSize: $annotationFontSize, annotationFontFamily: $annotationFontFamily,
+                         annotationTextColorHex: $annotationTextColorHex)
         }
         .sheet(isPresented: $showTableInsertion, onDismiss: {
             if focusEditorAfterTableInsert {
@@ -365,15 +372,19 @@ struct ReaderView: View {
                 insertTable(cells: cells, formatted: formatted)
             }
         }
-        .sheet(isPresented: $showEPUBAnnotationComposer) {
-            if let epubSelection {
-                EPUBAnnotationComposer(anchor: epubSelection) { note, colorHex in
-                    addEPUBAnnotation(note: note, colorHex: colorHex)
+        .sheet(isPresented: $showEPUBAnnotationComposer, onDismiss: { epubEditingAnnotation = nil }) {
+            if let anchor = epubEditingAnnotation?.anchor ?? epubSelection {
+                EPUBAnnotationComposer(anchor: anchor, existing: epubEditingAnnotation) { note, colorHex, markStyle in
+                    saveEPUBAnnotation(note: note, colorHex: colorHex, markStyle: markStyle)
                 }
             }
         }
         .sheet(isPresented: $showEPUBAnnotationList) {
             EPUBAnnotationListSheet(annotations: epubAnnotations, onSelect: jumpToEPUBAnnotation,
+                                    onEdit: { annotation in
+                                        epubEditingAnnotation = annotation
+                                        DispatchQueue.main.async { showEPUBAnnotationComposer = true }
+                                    },
                                     onDelete: deleteEPUBAnnotation)
         }
         .alert("文档有未保存的修改", isPresented: $showUnsavedAlert) {
@@ -463,6 +474,7 @@ struct ReaderView: View {
             ReaderActions.restoreEPUBNotebookLayoutHandler = { maximizedNotebookPane = nil }
             ReaderActions.addEPUBAnnotationHandler = {
                 guard epubDocument != nil, epubSelection != nil else { return }
+                epubEditingAnnotation = nil
                 showEPUBAnnotationComposer = true
             }
             ReaderActions.showEPUBAnnotationsHandler = {
@@ -498,9 +510,9 @@ struct ReaderView: View {
                 Text("阅读空间").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Button(action: chooseFolder) { Image(systemName: "folder.badge.plus") }
-                    .buttonStyle(.plain).help("打开文件夹")
+                    .buttonStyle(.plain).help("打开文件夹").toolbarHint("打开文件夹")
                 Button(action: chooseFile) { Image(systemName: "doc.badge.plus") }
-                    .buttonStyle(.plain).help("打开文件")
+                    .buttonStyle(.plain).help("打开文件").toolbarHint("打开文件")
             }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
 
             if !markdownFiles.isEmpty {
@@ -540,10 +552,10 @@ struct ReaderView: View {
                 if !headings.isEmpty {
                     Button { expandedHeadings = Set(headings.map(\.id)) } label: {
                         Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10))
-                    }.buttonStyle(.plain).help("展开全部目录")
+                    }.buttonStyle(.plain).help("展开全部目录").toolbarHint("展开全部目录")
                     Button { expandedHeadings.removeAll() } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
-                    }.buttonStyle(.plain).help("收起子目录")
+                    }.buttonStyle(.plain).help("收起子目录").toolbarHint("收起子目录")
                 }
             }.padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 8)
 
@@ -615,6 +627,20 @@ struct ReaderView: View {
         }
     }
 
+    private func toolbarModeSegment(_ symbol: String, selected: Bool, hint: String,
+                                    action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 11, weight: .medium))
+                .frame(maxWidth: .infinity).frame(height: 22)
+                .background(selected ? Color.accentColor.opacity(0.18) : .clear,
+                            in: RoundedRectangle(cornerRadius: 3))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(hint)
+        .toolbarHint(hint)
+    }
+
     private var toolbar: some View {
         HStack(spacing: 8) {
             Button {
@@ -627,6 +653,7 @@ struct ReaderView: View {
             }
             .buttonStyle(.plain)
             .help(showSidebar ? "隐藏目录侧栏（⌘⌥1）" : "显示目录侧栏（⌘⌥1）")
+            .toolbarHint(showSidebar ? "隐藏目录侧栏 · ⌘⌥1" : "显示目录侧栏 · ⌘⌥1")
             Text(selectedFile?.deletingPathExtension().lastPathComponent ?? documentTitle)
                 .font(.system(size: 13, weight: .medium)).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -640,7 +667,8 @@ struct ReaderView: View {
                 } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.plain)
                 .disabled(epubCurrentChapter == 0)
-                .help("上一页（←）")
+                .help("上一章 / 上一页（←）")
+                .toolbarHint("上一章 / 上一页 · ←")
                 Text("\(epubCurrentChapter + 1) / \(epubDocument.chapters.count)")
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                     .help("EPUB 阅读顺序中的章节位置")
@@ -653,13 +681,15 @@ struct ReaderView: View {
                 } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.plain)
                 .disabled(epubCurrentChapter >= epubDocument.chapters.count - 1)
-                .help("下一页（→）")
-                Button { showEPUBAnnotationComposer = true } label: {
+                .help("下一章 / 下一页（→）")
+                .toolbarHint("下一章 / 下一页 · →")
+                Button { epubEditingAnnotation = nil; showEPUBAnnotationComposer = true } label: {
                     Image(systemName: "highlighter").font(.system(size: 13)).frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
                 .disabled(epubSelection == nil)
                 .help(epubSelection == nil ? "先在原书中选中文字，再添加注释（⇧⌘M）" : "为所选文字添加注释（⇧⌘M）")
+                .toolbarHint("选择原书文字后添加注释 · ⇧⌘M")
                 Button { showEPUBAnnotationList = true } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "text.book.closed").font(.system(size: 12))
@@ -668,55 +698,80 @@ struct ReaderView: View {
                 }
                 .buttonStyle(.plain)
                 .help("查看 EPUB 注释（⌥⌘M）")
+                .toolbarHint("查看、修改或删除注释 · ⌥⌘M")
             }
             HStack(spacing: 7) {
                 Image(systemName: "rectangle.center.inset.filled").font(.system(size: 11)).foregroundStyle(.secondary)
+                    .help("调整阅读区域宽度；拖动旁边的滑块")
+                    .toolbarHint("阅读区域宽度")
                 Slider(value: $readerWidth, in: 520...1040, step: 20)
                     .frame(width: 118).help("调整阅读宽度：\(Int(readerWidth)) 像素")
+                    .toolbarHint("拖动调整阅读区域宽度：\(Int(readerWidth)) px")
                 Button { ReaderActions.adjustTypographySize(-1) } label: { Text("A−").font(.system(size: 12, weight: .medium)) }
                     .buttonStyle(.plain).help("缩小当前区域字体（⌘−）")
+                    .toolbarHint("缩小当前区域字体 · ⌘−")
                 Button { ReaderActions.adjustTypographySize(1) } label: { Text("A+").font(.system(size: 12, weight: .medium)) }
                     .buttonStyle(.plain).help("放大当前区域字体（⌘+）")
+                    .toolbarHint("放大当前区域字体 · ⌘+")
                 Button { showSettings = true } label: { Label("样式", systemImage: "textformat.size").font(.system(size: 12)) }
                     .buttonStyle(.plain).help("字体与行距（⌘,）")
+                    .toolbarHint("字体、行距与注释文字样式 · ⌘,")
                 if isEPUBNotebook {
-                    Picker("原书与笔记", selection: $epubNotebookLayout) {
-                        Image(systemName: "book").tag(EPUBNotebookLayout.epub).help("只看 EPUB 原书")
-                        Image(systemName: "doc.text").tag(EPUBNotebookLayout.notes).help("只看 Markdown 笔记")
-                        Image(systemName: "rectangle.split.3x1").tag(EPUBNotebookLayout.stacked).help("原书、笔记预览和编辑三栏工作区")
+                    HStack(spacing: 1) {
+                        toolbarModeSegment("book", selected: epubNotebookLayout == .epub,
+                                           hint: "只看 EPUB 原书 · ⌃⌘1") { epubNotebookLayout = .epub }
+                        toolbarModeSegment("doc.text", selected: epubNotebookLayout == .notes,
+                                           hint: "只看 Markdown 笔记 · ⌃⌘2") { epubNotebookLayout = .notes }
+                        toolbarModeSegment("rectangle.split.3x1", selected: epubNotebookLayout == .stacked,
+                                           hint: "原书 + 笔记预览 + 编辑 · ⌃⌘3") { epubNotebookLayout = .stacked }
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 86).help("切换原书、笔记或三栏工作区")
+                    .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                    .frame(width: 86).help("切换原书、笔记或三栏工作区")
                     if epubNotebookLayout == .notes {
-                        Picker("笔记视图", selection: $displayMode) {
-                            Image(systemName: "eye").tag(ReaderDisplayMode.read).help("只看笔记预览")
-                            Image(systemName: "pencil.line").tag(ReaderDisplayMode.edit).help("编辑 Markdown 笔记")
-                            Image(systemName: "rectangle.split.2x1").tag(ReaderDisplayMode.split).help("笔记编辑与预览并排")
+                        HStack(spacing: 1) {
+                            toolbarModeSegment("eye", selected: displayMode == .read,
+                                               hint: "只看笔记预览 · ⇧⌘V") { displayMode = .read }
+                            toolbarModeSegment("pencil.line", selected: displayMode == .edit,
+                                               hint: "编辑 Markdown 笔记 · ⌘R") { displayMode = .edit }
+                            toolbarModeSegment("rectangle.split.2x1", selected: displayMode == .split,
+                                               hint: "笔记编辑与预览并排") { displayMode = .split }
                         }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 86).help("切换 Markdown 笔记的编辑与预览")
+                        .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                        .frame(width: 86).help("切换 Markdown 笔记的编辑与预览")
                     }
                 } else if epubDocument != nil {
-                    Picker("EPUB阅读与编辑", selection: $displayMode) {
-                        Image(systemName: "eye").tag(ReaderDisplayMode.read).help("阅读 EPUB 原书")
-                        Image(systemName: "pencil.line").tag(ReaderDisplayMode.edit).help("所见即所得编辑 EPUB")
+                    HStack(spacing: 1) {
+                        toolbarModeSegment("eye", selected: displayMode == .read,
+                                           hint: "阅读 EPUB 原书 · ⌘R") { displayMode = .read }
+                        toolbarModeSegment("pencil.line", selected: displayMode == .edit,
+                                           hint: "所见即所得编辑 EPUB · ⌘R") { displayMode = .edit }
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 58).help("阅读或编辑 EPUB 原文")
+                    .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                    .frame(width: 58).help("阅读或编辑 EPUB 原文（⌘R 切换）")
                 } else {
-                    Picker("显示模式", selection: $displayMode) {
-                        Image(systemName: "eye").tag(ReaderDisplayMode.read).help("只看 Markdown 预览（⇧⌘V）")
-                        Image(systemName: "pencil.line").tag(ReaderDisplayMode.edit).help("只看编辑器")
-                        Image(systemName: "rectangle.split.2x1").tag(ReaderDisplayMode.split).help("编辑器与预览并排")
+                    HStack(spacing: 1) {
+                        toolbarModeSegment("eye", selected: displayMode == .read,
+                                           hint: "只看 Markdown 预览 · ⇧⌘V") { displayMode = .read }
+                        toolbarModeSegment("pencil.line", selected: displayMode == .edit,
+                                           hint: "只看编辑器 · ⌘R") { displayMode = .edit }
+                        toolbarModeSegment("rectangle.split.2x1", selected: displayMode == .split,
+                                           hint: "编辑器与预览并排") { displayMode = .split }
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 86).help("切换编辑器与 Markdown 预览")
+                    .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                    .frame(width: 86).help("切换编辑器与 Markdown 预览")
                 }
                 if isDirty {
                     Button("保存") { _ = saveDocument() }.buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium)).help("保存修改（⌘S）")
+                        .toolbarHint("保存修改 · ⌘S")
                 }
             }.fixedSize()
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, 74)
         .frame(maxWidth: .infinity)
         .frame(height: 34)
+        .zIndex(10)
     }
 
     private func readingPane(backgroundHex: String? = nil) -> some View {
@@ -913,6 +968,8 @@ struct ReaderView: View {
         EPUBChapterView(chapter: document.chapters[epubCurrentChapter], resourceRoot: document.workingDirectory,
                         editable: editable, width: readerWidth,
                         bodySize: bodySize, bodyFamily: bodyFamily, bodyColorHex: bodyColorHex,
+                        annotationFontSize: annotationFontSize, annotationFontFamily: annotationFontFamily,
+                        annotationTextColorHex: annotationTextColorHex,
                         backgroundColorHex: readerBackgroundHex,
                         lineHeight: lineHeight,
                         scrollFragment: epubTargetFragment, scrollRequest: epubNavigationRequest,
@@ -926,7 +983,14 @@ struct ReaderView: View {
             epubSelection = nil
             epubAnnotationJumpID = nil
             epubNavigationRequest += 1
-        }, onTextSelection: { epubSelection = $0 }) { body in
+        }, onTextSelection: { epubSelection = $0 }, onEditAnnotation: { id in
+            guard let annotation = epubAnnotations.first(where: { $0.id == id }) else { return }
+            epubEditingAnnotation = annotation
+            showEPUBAnnotationComposer = true
+        }, onDeleteAnnotation: { id in
+            guard let annotation = epubAnnotations.first(where: { $0.id == id }) else { return }
+            deleteEPUBAnnotation(annotation)
+        }) { body in
             do {
                 try document.replaceChapterBody(at: epubCurrentChapter, with: body)
                 epubHasChanges = true
@@ -949,17 +1013,25 @@ struct ReaderView: View {
         epubAnnotationJumpRequest += 1
     }
 
-    private func addEPUBAnnotation(note: String, colorHex: String) {
-        guard let document = epubDocument, let anchor = epubSelection,
-              document.chapters.indices.contains(epubCurrentChapter) else { return }
-        let annotation = EPUBAnnotation(chapterHref: document.chapters[epubCurrentChapter].href,
-                                        anchor: anchor, note: note.trimmingCharacters(in: .whitespacesAndNewlines),
-                                        colorHex: colorHex)
-        let updated = epubAnnotations + [annotation]
+    private func saveEPUBAnnotation(note: String, colorHex: String, markStyle: EPUBAnnotationMarkStyle) {
+        guard let document = epubDocument else { return }
+        var updated = epubAnnotations
+        if let existing = epubEditingAnnotation, let index = updated.firstIndex(where: { $0.id == existing.id }) {
+            updated[index].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            updated[index].colorHex = colorHex
+            updated[index].markStyle = markStyle
+        } else {
+            guard let anchor = epubSelection, document.chapters.indices.contains(epubCurrentChapter) else { return }
+            updated.append(EPUBAnnotation(chapterHref: document.chapters[epubCurrentChapter].href,
+                                          anchor: anchor,
+                                          note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          colorHex: colorHex, markStyle: markStyle))
+        }
         do {
             try EPUBAnnotationStore.save(updated, for: document.sourceURL)
             epubAnnotations = updated
             epubSelection = nil
+            epubEditingAnnotation = nil
         } catch {
             saveError = "无法保存注释：\(error.localizedDescription)"
         }
@@ -1579,18 +1651,24 @@ struct SettingsView: View {
     @Binding var lineHeight: Double
     @Binding var paragraphSpacing: Double
     @Binding var outlineColorsData: Data
+    @Binding var annotationFontSize: Double
+    @Binding var annotationFontFamily: String
+    @Binding var annotationTextColorHex: String
     @Environment(\.dismiss) private var dismiss
     @State private var styles: [HeadingStyle]
     @State private var outlineColors: [String]
     private let families = ["系统默认", "PingFang SC", "Songti SC", "Heiti SC", "SF Pro Text", "Avenir Next", "Georgia", "Menlo"]
 
-    init(readerWidth: Binding<Double>, bodyColorHex: Binding<String>, readerBackgroundHex: Binding<String>, strongColorHex: Binding<String>, strongSize: Binding<Double>, strongFamily: Binding<String>, headingStylesData: Binding<Data>, bodySize: Binding<Double>, bodyFamily: Binding<String>, lineHeight: Binding<Double>, paragraphSpacing: Binding<Double>, outlineColorsData: Binding<Data>) {
+    init(readerWidth: Binding<Double>, bodyColorHex: Binding<String>, readerBackgroundHex: Binding<String>, strongColorHex: Binding<String>, strongSize: Binding<Double>, strongFamily: Binding<String>, headingStylesData: Binding<Data>, bodySize: Binding<Double>, bodyFamily: Binding<String>, lineHeight: Binding<Double>, paragraphSpacing: Binding<Double>, outlineColorsData: Binding<Data>, annotationFontSize: Binding<Double>, annotationFontFamily: Binding<String>, annotationTextColorHex: Binding<String>) {
         _readerWidth = readerWidth; _strongColorHex = strongColorHex; _strongSize = strongSize
         _bodyColorHex = bodyColorHex
         _readerBackgroundHex = readerBackgroundHex
         _strongFamily = strongFamily; _headingStylesData = headingStylesData
         _bodySize = bodySize; _bodyFamily = bodyFamily; _lineHeight = lineHeight; _paragraphSpacing = paragraphSpacing
         _outlineColorsData = outlineColorsData
+        _annotationFontSize = annotationFontSize
+        _annotationFontFamily = annotationFontFamily
+        _annotationTextColorHex = annotationTextColorHex
         _styles = State(initialValue: (try? JSONDecoder().decode([HeadingStyle].self, from: headingStylesData.wrappedValue)) ?? HeadingStyle.defaults)
         _outlineColors = State(initialValue: (try? JSONDecoder().decode([String].self, from: outlineColorsData.wrappedValue)) ?? Array(repeating: "#222222", count: 6))
     }
@@ -1630,6 +1708,21 @@ struct SettingsView: View {
                     }
                     LabeledContent("加粗文字字号", value: "\(Int(strongSize)) pt")
                     Slider(value: $strongSize, in: 13...22, step: 1)
+                }
+                Section("EPUB 注释文字") {
+                    HStack {
+                        Text("注释文字颜色"); Spacer()
+                        ColorPicker("", selection: Binding(
+                            get: { Color(hex: annotationTextColorHex) },
+                            set: { annotationTextColorHex = $0.hexString }
+                        ), supportsOpacity: false).labelsHidden()
+                        TextField("#777777", text: $annotationTextColorHex).frame(width: 90).textFieldStyle(.roundedBorder)
+                    }
+                    Picker("注释字体", selection: $annotationFontFamily) {
+                        ForEach(families, id: \.self) { Text($0).font($0 == "系统默认" ? .system(size: 12) : .custom($0, size: 12)).tag($0) }
+                    }
+                    LabeledContent("注释字号", value: "\(Int(annotationFontSize)) pt")
+                    Slider(value: $annotationFontSize, in: 9...18, step: 1)
                 }
                 Section("标题样式") {
                     ForEach($styles) { $style in
@@ -1676,6 +1769,9 @@ struct SettingsView: View {
         readerBackgroundHex = "#FFFFFF"
         strongSize = 15
         strongFamily = "系统默认"
+        annotationFontSize = 11
+        annotationFontFamily = "系统默认"
+        annotationTextColorHex = "#777777"
         bodySize = 15
         bodyFamily = "系统默认"
         lineHeight = 1.85
@@ -1797,5 +1893,45 @@ extension Color {
     var hexString: String {
         let ns = NSColor(self).usingColorSpace(.deviceRGB) ?? .black
         return String(format: "#%02X%02X%02X", Int(ns.redComponent * 255), Int(ns.greenComponent * 255), Int(ns.blueComponent * 255))
+    }
+}
+
+private extension View {
+    func toolbarHint(_ text: String) -> some View {
+        modifier(ToolbarHoverHint(text: text))
+    }
+}
+
+private struct ToolbarHoverHint: ViewModifier {
+    let text: String
+    @State private var isHovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { isHovering = $0 }
+            .overlay(alignment: .bottom) {
+                GeometryReader { geometry in
+                    if isHovering {
+                        let position = geometry.frame(in: .named("mainWindow")).midX
+                        let windowWidth = NSApp.keyWindow?.contentView?.bounds.width ?? 1000
+                        let bubbleWidth: CGFloat = 268
+                        let horizontalOffset = position > windowWidth * 0.68 ? geometry.size.width - bubbleWidth : 0
+                        Text(text)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.primary)
+                            .frame(width: 250, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 6)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(0.12)))
+                            .shadow(color: .black.opacity(0.14), radius: 5, y: 2)
+                            .offset(x: horizontalOffset, y: geometry.size.height + 8)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
+                }
+            }
+            .zIndex(isHovering ? 100 : 0)
     }
 }

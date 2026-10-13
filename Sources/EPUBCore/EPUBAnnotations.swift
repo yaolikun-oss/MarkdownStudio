@@ -18,16 +18,38 @@ public struct EPUBAnnotation: Codable, Identifiable, Hashable {
     public var anchor: EPUBTextAnchor
     public var note: String
     public var colorHex: String
+    public var markStyle: EPUBAnnotationMarkStyle
     public var createdAt: Date
 
-    public init(chapterHref: String, anchor: EPUBTextAnchor, note: String, colorHex: String) {
+    public init(chapterHref: String, anchor: EPUBTextAnchor, note: String, colorHex: String,
+                markStyle: EPUBAnnotationMarkStyle = .highlight) {
         id = UUID().uuidString
         self.chapterHref = chapterHref
         self.anchor = anchor
         self.note = note
         self.colorHex = colorHex
+        self.markStyle = markStyle
         createdAt = Date()
     }
+
+    private enum CodingKeys: String, CodingKey { case id, chapterHref, anchor, note, colorHex, markStyle, createdAt }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        chapterHref = try values.decode(String.self, forKey: .chapterHref)
+        anchor = try values.decode(EPUBTextAnchor.self, forKey: .anchor)
+        note = try values.decode(String.self, forKey: .note)
+        colorHex = try values.decode(String.self, forKey: .colorHex)
+        markStyle = try values.decodeIfPresent(EPUBAnnotationMarkStyle.self, forKey: .markStyle) ?? .highlight
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+    }
+}
+
+public enum EPUBAnnotationMarkStyle: String, Codable, CaseIterable, Identifiable {
+    case highlight
+    case underline
+    public var id: String { rawValue }
 }
 
 public enum EPUBAnnotationStore {

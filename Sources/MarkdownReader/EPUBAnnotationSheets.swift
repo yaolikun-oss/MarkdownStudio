@@ -4,20 +4,37 @@ import SwiftUI
 struct EPUBAnnotationComposer: View {
     @Environment(\.dismiss) private var dismiss
     let anchor: EPUBTextAnchor
-    let onSave: (String, String) -> Void
-    @State private var note = ""
-    @State private var colorHex = "#FFE58A"
+    var existing: EPUBAnnotation? = nil
+    let onSave: (String, String, EPUBAnnotationMarkStyle) -> Void
+    @State private var note: String
+    @State private var colorHex: String
+    @State private var markStyle: EPUBAnnotationMarkStyle
+
+    init(anchor: EPUBTextAnchor, existing: EPUBAnnotation? = nil,
+         onSave: @escaping (String, String, EPUBAnnotationMarkStyle) -> Void) {
+        self.anchor = anchor
+        self.existing = existing
+        self.onSave = onSave
+        _note = State(initialValue: existing?.note ?? "")
+        _colorHex = State(initialValue: existing?.colorHex ?? "#FFE58A")
+        _markStyle = State(initialValue: existing?.markStyle ?? .highlight)
+    }
 
     private let colors = ["#FFE58A", "#BFE8C5", "#B9DDF5", "#F5C5D7"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("添加 EPUB 注释").font(.system(size: 17, weight: .semibold))
+            Text(existing == nil ? "添加 EPUB 注释" : "修改 EPUB 注释").font(.system(size: 17, weight: .semibold))
             Text(anchor.quote).font(.system(size: 13)).foregroundStyle(.secondary)
                 .lineLimit(5).padding(10).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 7))
+            Picker("标记方式", selection: $markStyle) {
+                Text("高亮").tag(EPUBAnnotationMarkStyle.highlight)
+                Text("下划线").tag(EPUBAnnotationMarkStyle.underline)
+            }.pickerStyle(.segmented).frame(width: 180)
             HStack(spacing: 10) {
-                Text("标记颜色").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(markStyle == .highlight ? "高亮颜色" : "下划线颜色")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
                 ForEach(colors, id: \.self) { color in
                     Button { colorHex = color } label: {
                         Circle().fill(Color(hex: color)).frame(width: 20, height: 20)
@@ -31,7 +48,7 @@ struct EPUBAnnotationComposer: View {
             HStack {
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存注释") { onSave(note, colorHex); dismiss() }
+                Button(existing == nil ? "保存注释" : "保存修改") { onSave(note, colorHex, markStyle); dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -43,6 +60,7 @@ struct EPUBAnnotationListSheet: View {
     @Environment(\.dismiss) private var dismiss
     let annotations: [EPUBAnnotation]
     let onSelect: (EPUBAnnotation) -> Void
+    let onEdit: (EPUBAnnotation) -> Void
     let onDelete: (EPUBAnnotation) -> Void
 
     var body: some View {
@@ -71,6 +89,9 @@ struct EPUBAnnotationListSheet: View {
                                 Text(annotation.chapterHref).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                             }.contentShape(Rectangle())
                         }.buttonStyle(.plain)
+                        Button { onEdit(annotation); dismiss() } label: {
+                            Image(systemName: "pencil").font(.system(size: 11))
+                        }.buttonStyle(.plain).help("修改注释")
                         Button(role: .destructive) { onDelete(annotation) } label: {
                             Image(systemName: "trash").font(.system(size: 11))
                         }.buttonStyle(.plain).help("删除注释")

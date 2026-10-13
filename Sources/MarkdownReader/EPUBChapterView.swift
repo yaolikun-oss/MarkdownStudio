@@ -11,6 +11,9 @@ struct EPUBChapterView: NSViewRepresentable {
     let bodySize: Double
     let bodyFamily: String
     let bodyColorHex: String
+    let annotationFontSize: Double
+    let annotationFontFamily: String
+    let annotationTextColorHex: String
     let backgroundColorHex: String
     let lineHeight: Double
     let scrollFragment: String?
@@ -20,6 +23,8 @@ struct EPUBChapterView: NSViewRepresentable {
     let annotationJumpRequest: Int
     let onNavigateChapter: (Int) -> Void
     let onTextSelection: (EPUBTextAnchor?) -> Void
+    let onEditAnnotation: (String) -> Void
+    let onDeleteAnnotation: (String) -> Void
     let onBodyChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onBodyChange: onBodyChange) }
@@ -30,6 +35,8 @@ struct EPUBChapterView: NSViewRepresentable {
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.userContentController.add(context.coordinator, name: "epubBodyChanged")
         configuration.userContentController.add(context.coordinator, name: "epubSelectionChanged")
+        configuration.userContentController.add(context.coordinator, name: "epubAnnotationEdit")
+        configuration.userContentController.add(context.coordinator, name: "epubAnnotationDelete")
         let editorScript = WKUserScript(source: """
         (() => {
           const enable = () => {
@@ -62,6 +69,8 @@ struct EPUBChapterView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.onBodyChange = onBodyChange
         context.coordinator.onTextSelection = onTextSelection
+        context.coordinator.onEditAnnotation = onEditAnnotation
+        context.coordinator.onDeleteAnnotation = onDeleteAnnotation
         context.coordinator.editable = editable
         (webView as? EPUBReaderWebView)?.onNavigateChapter = onNavigateChapter
         (webView as? EPUBReaderWebView)?.allowsChapterNavigation = !editable
@@ -90,7 +99,10 @@ struct EPUBChapterView: NSViewRepresentable {
         webView.evaluateJavaScript("document.body?.style.setProperty('max-width','\(Int(width))px')")
         webView.evaluateJavaScript(Self.typographyUpdateScript(bodySize: bodySize, bodyFamily: bodyFamily,
                                                                 bodyColorHex: bodyColorHex,
-                                                                backgroundColorHex: backgroundColorHex, lineHeight: lineHeight))
+                                                                backgroundColorHex: backgroundColorHex, lineHeight: lineHeight,
+                                                                annotationFontSize: annotationFontSize,
+                                                                annotationFontFamily: annotationFontFamily,
+                                                                annotationTextColorHex: annotationTextColorHex))
         webView.evaluateJavaScript("if(document.body) document.body.contentEditable = '\(editable ? "true" : "false")'")
         if context.coordinator.lastScrollRequest != scrollRequest {
             context.coordinator.lastScrollRequest = scrollRequest
@@ -110,7 +122,7 @@ struct EPUBChapterView: NSViewRepresentable {
         const range = selection.getRangeAt(0);
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
-            return node.parentElement?.closest('script,style,head,[data-mdstudio-annotation-id]')
+            return node.parentElement?.closest('script,style,head,[data-mdstudio-annotation-id],[data-mdstudio-annotation-ui]')
               ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
           }
         });
@@ -155,7 +167,7 @@ struct EPUBChapterView: NSViewRepresentable {
         let css = """
         <style id="mdstudio-reader-style">
         html{scroll-behavior:smooth;background:var(--mdstudio-reader-background,\(background))!important}body{max-width:\(Int(width))px;margin:0 auto!important;padding:40px 38px 100px!important;box-sizing:border-box;overflow-wrap:anywhere;background:var(--mdstudio-reader-background,\(background))!important;font-family:var(--mdstudio-font-family,\(family))!important;font-size:var(--mdstudio-font-size,\(bodySize)px)!important;line-height:var(--mdstudio-line-height,\(lineHeight))!important;color:var(--mdstudio-text-color,\(color))!important}
-        body *{font-family:inherit!important;color:inherit!important;line-height:inherit!important}
+        body *:not([data-mdstudio-annotation-ui]):not(.mdstudio-annotation-tip){font-family:inherit!important;color:inherit!important;line-height:inherit!important}
         body h1{font-size:1.8em!important}body h2{font-size:1.6em!important}body h3{font-size:1.4em!important}body h4{font-size:1.2em!important}body h5{font-size:1.1em!important}body h6{font-size:1em!important}
         img,svg,video{max-width:100%;height:auto}table{max-width:100%}body[contenteditable=true]{outline:none;caret-color:#118AB2}
         </style>
@@ -169,14 +181,17 @@ struct EPUBChapterView: NSViewRepresentable {
     }
 
     private static func typographyUpdateScript(bodySize: Double, bodyFamily: String, bodyColorHex: String,
-                                               backgroundColorHex: String, lineHeight: Double) -> String {
+                                               backgroundColorHex: String, lineHeight: Double,
+                                               annotationFontSize: Double, annotationFontFamily: String,
+                                               annotationTextColorHex: String) -> String {
         let family = cssFontFamily(bodyFamily)
         let color = validHexColor(bodyColorHex) ? bodyColorHex : "#282725"
         let background = validHexColor(backgroundColorHex) ? backgroundColorHex : "#FFFFFF"
-        let values = [family, color, background]
+        let annotationColor = validHexColor(annotationTextColorHex) ? annotationTextColorHex : "#777777"
+        let values = [family, color, background, cssFontFamily(annotationFontFamily), annotationColor]
         guard let data = try? JSONSerialization.data(withJSONObject: values, options: [.fragmentsAllowed]),
               let json = String(data: data, encoding: .utf8) else { return "" }
-        return "(() => { const v=\(json); const b=document.body; if(!b)return; b.style.setProperty('--mdstudio-font-family',v[0]); b.style.setProperty('--mdstudio-font-size','\(bodySize)px'); b.style.setProperty('--mdstudio-line-height','\(lineHeight)'); b.style.setProperty('--mdstudio-text-color',v[1]); b.style.setProperty('--mdstudio-reader-background',v[2]); document.documentElement.style.backgroundColor=v[2]; })()"
+        return "(() => { const v=\(json); const b=document.body; if(!b)return; b.style.setProperty('--mdstudio-font-family',v[0]); b.style.setProperty('--mdstudio-font-size','\(bodySize)px'); b.style.setProperty('--mdstudio-line-height','\(lineHeight)'); b.style.setProperty('--mdstudio-text-color',v[1]); b.style.setProperty('--mdstudio-reader-background',v[2]); b.style.setProperty('--mdstudio-annotation-font-family',v[3]); b.style.setProperty('--mdstudio-annotation-font-size','\(annotationFontSize)px'); b.style.setProperty('--mdstudio-annotation-text-color',v[4]); document.documentElement.style.backgroundColor=v[2]; })()"
     }
 
     private static func cssFontFamily(_ value: String) -> String {
@@ -222,6 +237,8 @@ struct EPUBChapterView: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var onBodyChange: (String) -> Void
         var onTextSelection: (EPUBTextAnchor?) -> Void = { _ in }
+        var onEditAnnotation: (String) -> Void = { _ in }
+        var onDeleteAnnotation: (String) -> Void = { _ in }
         var renderKey: String?
         var editable = false
         var pendingFragment: String?
@@ -239,7 +256,11 @@ struct EPUBChapterView: NSViewRepresentable {
         init(onBodyChange: @escaping (String) -> Void) { self.onBodyChange = onBodyChange }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            if message.name == "epubBodyChanged" {
+            if message.name == "epubAnnotationEdit", let id = message.body as? String {
+                onEditAnnotation(id)
+            } else if message.name == "epubAnnotationDelete", let id = message.body as? String {
+                onDeleteAnnotation(id)
+            } else if message.name == "epubBodyChanged" {
                 guard editable, let body = message.body as? String else { return }
                 onBodyChange(body)
             } else if message.name == "epubSelectionChanged" {
@@ -280,7 +301,7 @@ struct EPUBChapterView: NSViewRepresentable {
         func applyAnnotations() {
             guard hasLoadedPage else { return }
             if editable {
-                webView?.evaluateJavaScript("document.querySelectorAll('[data-mdstudio-annotation-id]').forEach(mark=>{const parent=mark.parentNode;while(mark.firstChild)parent.insertBefore(mark.firstChild,mark);parent.removeChild(mark)})")
+                webView?.evaluateJavaScript("document.querySelectorAll('[data-mdstudio-annotation-id]').forEach(mark=>{const parent=mark.parentNode;while(mark.firstChild)parent.insertBefore(mark.firstChild,mark);parent.removeChild(mark)});document.querySelectorAll('[data-mdstudio-annotation-ui]').forEach(node=>node.remove())")
                 lastAnnotations = annotations
                 lastAppliedEditable = true
                 return
@@ -289,7 +310,7 @@ struct EPUBChapterView: NSViewRepresentable {
                   let data = try? JSONSerialization.data(withJSONObject: annotations.map { item in
                       ["id": item.id, "href": item.chapterHref, "quote": item.anchor.quote,
                        "prefix": item.anchor.prefix, "suffix": item.anchor.suffix,
-                       "note": item.note, "color": item.colorHex]
+                       "note": item.note, "color": item.colorHex, "style": item.markStyle.rawValue]
                   }, options: [.fragmentsAllowed]),
                   let json = String(data: data, encoding: .utf8),
                   let jumpData = try? JSONSerialization.data(withJSONObject: annotationJumpID ?? NSNull(), options: [.fragmentsAllowed]),
@@ -306,9 +327,10 @@ struct EPUBChapterView: NSViewRepresentable {
                 while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
                 parent.removeChild(mark);
               });
+              document.querySelectorAll('[data-mdstudio-annotation-ui]').forEach(node => node.remove());
               const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
                 acceptNode(node) {
-                  return node.parentElement?.closest('script,style,head,[data-mdstudio-annotation-id]')
+                  return node.parentElement?.closest('script,style,head,[data-mdstudio-annotation-id],[data-mdstudio-annotation-ui]')
                     ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
                 }
               });
@@ -343,11 +365,82 @@ struct EPUBChapterView: NSViewRepresentable {
                   range.setStart(segment.node,segment.from); range.setEnd(segment.node,segment.to);
                   const mark = document.createElement('mark');
                   mark.dataset.mdstudioAnnotationId = candidate.item.id;
-                  mark.title = candidate.item.note || candidate.item.quote;
-                  mark.style.cssText = 'background:'+candidate.item.color+';border-radius:2px;padding:0 1px;color:inherit';
+                  mark.dataset.mdstudioAnnotationNote = candidate.item.note || candidate.item.quote;
+                  mark.addEventListener('dblclick', event => {
+                    event.preventDefault(); event.stopPropagation();
+                    window.webkit.messageHandlers.epubAnnotationEdit.postMessage(candidate.item.id);
+                  });
+                  mark.style.cssText = candidate.item.style === 'underline'
+                    ? 'background:transparent;border-radius:0;padding:0;color:inherit;text-decoration:underline;text-decoration-color:'+candidate.item.color+';text-decoration-thickness:2px;text-underline-offset:2px'
+                    : 'background:'+candidate.item.color+';border-radius:2px;padding:0 1px;color:inherit';
                   mark.appendChild(range.extractContents()); range.insertNode(mark);
+                  if (segment === segments[0]) {
+                    const info = document.createElement('button');
+                    info.type = 'button'; info.dataset.mdstudioAnnotationUi = 'true';
+                    info.dataset.note = candidate.item.note || candidate.item.quote;
+                    info.textContent = 'ⓘ'; info.setAttribute('aria-label','查看注释');
+                    info.addEventListener('dblclick', event => {
+                      event.preventDefault(); event.stopPropagation();
+                      window.webkit.messageHandlers.epubAnnotationEdit.postMessage(candidate.item.id);
+                    });
+                    info.style.cssText = 'border:0;background:transparent;color:var(--mdstudio-annotation-text-color,#777);font:10px -apple-system,BlinkMacSystemFont,sans-serif;padding:0 2px;cursor:pointer;vertical-align:super';
+                    mark.after(info);
+                    if (candidate.item.note) {
+                      const preview = document.createElement('span');
+                      preview.dataset.mdstudioAnnotationUi = 'true';
+                      preview.textContent = ' '+candidate.item.note;
+                      preview.title = candidate.item.note;
+                      preview.style.cssText = 'display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--mdstudio-annotation-font-size,11px);font-family:var(--mdstudio-annotation-font-family,-apple-system),sans-serif;color:var(--mdstudio-annotation-text-color,#777);vertical-align:bottom';
+                      info.after(preview);
+                    }
+                  }
                 }
               }
+              const openAnnotationPopup = (id, note, x, y) => {
+                document.querySelectorAll('.mdstudio-annotation-tip').forEach(tip => tip.remove());
+                const tip = document.createElement('div'); tip.className = 'mdstudio-annotation-tip';
+                tip.dataset.mdstudioAnnotationUi = 'true';
+                tip.style.cssText = 'position:absolute;z-index:99999;min-width:190px;max-width:300px;padding:10px;border:1px solid #bbb;border-radius:7px;background:#fff;color:var(--mdstudio-annotation-text-color,#222);box-shadow:0 3px 12px #0003;font-size:var(--mdstudio-annotation-font-size,11px);font-family:var(--mdstudio-annotation-font-family,-apple-system),sans-serif;white-space:normal';
+                const text = document.createElement('div'); text.textContent = note || '（没有批注文字）';
+                text.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:9px;color:inherit;font:inherit';
+                tip.appendChild(text);
+                const actions = document.createElement('div'); actions.style.cssText = 'display:flex;justify-content:flex-end;gap:7px';
+                for (const [label, action] of [['编辑','edit'],['删除','delete']]) {
+                  const button = document.createElement('button'); button.type='button'; button.textContent=label;
+                  button.dataset.annotationAction=action; button.dataset.annotationId=id; button.dataset.mdstudioAnnotationUi='true';
+                  button.style.cssText = action==='delete' ? 'border:0;border-radius:4px;padding:4px 8px;background:#c43b32;color:white;cursor:pointer;font:inherit' : 'border:0;border-radius:4px;padding:4px 8px;background:#e8e8e8;color:#222;cursor:pointer;font:inherit';
+                  actions.appendChild(button);
+                }
+                tip.appendChild(actions); document.body.appendChild(tip);
+                tip.style.left=Math.max(8,Math.min(x+window.scrollX,window.innerWidth-tip.offsetWidth-8))+'px';
+                tip.style.top=(y+window.scrollY+6)+'px';
+              };
+              document.onclick = event => {
+                const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+                const actionButton = target?.closest('button[data-annotation-action]');
+                if (actionButton) {
+                  event.preventDefault(); event.stopPropagation();
+                  const handler = actionButton.dataset.annotationAction === 'delete' ? 'epubAnnotationDelete' : 'epubAnnotationEdit';
+                  window.webkit.messageHandlers[handler].postMessage(actionButton.dataset.annotationId);
+                  actionButton.closest('.mdstudio-annotation-tip')?.remove();
+                  return;
+                }
+                const info = target?.closest('button[data-mdstudio-annotation-ui]');
+                document.querySelectorAll('.mdstudio-annotation-tip').forEach(tip => tip.remove());
+                if (!info) return;
+                event.preventDefault(); event.stopPropagation();
+                const mark = info.previousElementSibling;
+                const rect=info.getBoundingClientRect();
+                openAnnotationPopup(mark?.dataset.mdstudioAnnotationId, info.dataset.note, rect.left, rect.bottom);
+              };
+              document.oncontextmenu = event => {
+                const target = event.target instanceof Element ? event.target : event.target?.parentElement;
+                const mark = target?.closest('mark[data-mdstudio-annotation-id]');
+                if (!mark) return;
+                event.preventDefault();
+                openAnnotationPopup(mark.dataset.mdstudioAnnotationId, mark.dataset.mdstudioAnnotationNote,
+                                    event.pageX-window.scrollX, event.pageY-window.scrollY);
+              };
               if (jumpID) document.querySelector('[data-mdstudio-annotation-id="'+jumpID+'"]')?.scrollIntoView({block:'center',behavior:'smooth'});
             })()
             """)
