@@ -21,6 +21,7 @@ struct ReaderWebView: NSViewRepresentable {
     let sourceLineTarget: Int
     let sourceLineRequest: Int
     let onSourceLineChange: (Int) -> Void
+    let onActivate: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -28,7 +29,8 @@ struct ReaderWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = ActivatingWKWebView(frame: .zero, configuration: configuration)
+        webView.onActivate = onActivate
         context.coordinator.webView = webView
         webView.navigationDelegate = context.coordinator
         context.coordinator.onSourceLineChange = onSourceLineChange
@@ -47,6 +49,7 @@ struct ReaderWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        (webView as? ActivatingWKWebView)?.onActivate = onActivate
         let html = pageHTML
         webView.underPageBackgroundColor = NSColor(Color(hex: readerBackgroundHex))
         context.coordinator.onSourceLineChange = onSourceLineChange
@@ -188,6 +191,16 @@ struct ReaderWebView: NSViewRepresentable {
             }
         }
 
+    }
+}
+
+@MainActor
+private final class ActivatingWKWebView: WKWebView {
+    var onActivate: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onActivate?()
+        super.mouseDown(with: event)
     }
 }
 

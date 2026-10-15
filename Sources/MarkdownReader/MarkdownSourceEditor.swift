@@ -12,6 +12,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     let sourceLineRequest: Int
     let focusRequest: Int
     let onSourceLineChange: (Int) -> Void
+    let onActivate: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, selection: $selection, headingStyles: headingStyles, bodyColorHex: bodyColorHex, strongColorHex: strongColorHex, onSourceLineChange: onSourceLineChange)
@@ -19,6 +20,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = MarkdownSourceTextView(frame: .zero)
+        textView.onActivate = onActivate
         textView.onTablePaste = { [weak coordinator = context.coordinator] table, textView in
             coordinator?.pasteTable(table, into: textView)
         }
@@ -33,7 +35,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainerInset = NSSize(width: 10, height: 12)
+        textView.textContainerInset = NSSize(width: 18, height: 12)
         textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         textView.backgroundColor = .textBackgroundColor
         textView.drawsBackground = true
@@ -65,6 +67,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+        (textView as? MarkdownSourceTextView)?.onActivate = onActivate
         // SwiftUI can redraw the representable while an input method is composing.
         // Replacing NSTextView's string or selection here discards the marked text,
         // which makes Chinese pinyin appear to require choosing a numbered candidate.
@@ -408,6 +411,12 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
 final class MarkdownSourceTextView: NSTextView {
     var onTablePaste: ((String, NSTextView) -> Void)?
+    var onActivate: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onActivate?()
+        super.mouseDown(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)

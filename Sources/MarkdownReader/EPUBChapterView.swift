@@ -21,10 +21,14 @@ struct EPUBChapterView: NSViewRepresentable {
     let annotations: [EPUBAnnotation]
     let annotationJumpID: String?
     let annotationJumpRequest: Int
+    let savedPosition: SavedReadingPosition?
+    let positionRestoreRequest: Int
+    let onActivate: () -> Void
     let onNavigateChapter: (Int) -> Void
     let onTextSelection: (EPUBTextAnchor?) -> Void
     let onEditAnnotation: (String) -> Void
     let onDeleteAnnotation: (String) -> Void
+    let onReadPosition: (String, Double) -> Void
     let onBodyChange: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onBodyChange: onBodyChange) }
@@ -37,6 +41,7 @@ struct EPUBChapterView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "epubSelectionChanged")
         configuration.userContentController.add(context.coordinator, name: "epubAnnotationEdit")
         configuration.userContentController.add(context.coordinator, name: "epubAnnotationDelete")
+        configuration.userContentController.add(context.coordinator, name: "epubReadingPosition")
         let editorScript = WKUserScript(source: """
         (() => {
           const enable = () => {
@@ -54,6 +59,7 @@ struct EPUBChapterView: NSViewRepresentable {
         let selectionScript = WKUserScript(source: Self.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         configuration.userContentController.addUserScript(selectionScript)
         let webView = EPUBReaderWebView(frame: .zero, configuration: configuration)
+        webView.onActivate = onActivate
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         webView.onNavigateChapter = onNavigateChapter
@@ -71,8 +77,10 @@ struct EPUBChapterView: NSViewRepresentable {
         context.coordinator.onTextSelection = onTextSelection
         context.coordinator.onEditAnnotation = onEditAnnotation
         context.coordinator.onDeleteAnnotation = onDeleteAnnotation
+        context.coordinator.onReadPosition = onReadPosition
         context.coordinator.editable = editable
         (webView as? EPUBReaderWebView)?.onNavigateChapter = onNavigateChapter
+        (webView as? EPUBReaderWebView)?.onActivate = onActivate
         (webView as? EPUBReaderWebView)?.allowsChapterNavigation = !editable
         webView.underPageBackgroundColor = NSColor(Color(hex: backgroundColorHex))
         let html = Self.readerHTML(chapter: chapter, width: width, bodySize: bodySize,
@@ -96,6 +104,7 @@ struct EPUBChapterView: NSViewRepresentable {
         context.coordinator.editable = editable
         context.coordinator.setAnnotations(annotations, jumpID: annotationJumpID,
                                           jumpRequest: annotationJumpRequest, chapterHref: chapter.href)
+        context.coordinator.restorePosition(savedPosition, request: positionRestoreRequest, chapterHref: chapter.href)
         webView.evaluateJavaScript("document.body?.style.setProperty('max-width','\(Int(width))px')")
         webView.evaluateJavaScript(Self.typographyUpdateScript(bodySize: bodySize, bodyFamily: bodyFamily,
                                                                 bodyColorHex: bodyColorHex,
@@ -239,6 +248,7 @@ struct EPUBChapterView: NSViewRepresentable {
         var onTextSelection: (EPUBTextAnchor?) -> Void = { _ in }
         var onEditAnnotation: (String) -> Void = { _ in }
         var onDeleteAnnotation: (String) -> Void = { _ in }
+        var onReadPosition: (String, Double) -> Void = { _, _ in }
         var renderKey: String?
         var editable = false
         var pendingFragment: String?
@@ -252,6 +262,9 @@ struct EPUBChapterView: NSViewRepresentable {
         var annotationJumpID: String?
         var annotationJumpRequest = -1
         var chapterHref = ""
+        var savedPosition: SavedReadingPosition?
+        var positionRestoreRequest = -1
+        var lastRestoredPositionRequest = -1
         weak var webView: WKWebView?
         init(onBodyChange: @escaping (String) -> Void) { self.onBodyChange = onBodyChange }
 
@@ -272,6 +285,11 @@ struct EPUBChapterView: NSViewRepresentable {
                 }
                 onTextSelection(EPUBTextAnchor(quote: quote, prefix: value["prefix"] ?? "",
                                                suffix: value["suffix"] ?? ""))
+            } else if message.name == "epubReadingPosition",
+                      let value = message.body as? [String: Any],
+                      let href = value["href"] as? String,
+                      let fraction = value["fraction"] as? Double {
+                onReadPosition(href, min(1, max(0, fraction)))
             }
         }
 
@@ -285,7 +303,42 @@ struct EPUBChapterView: NSViewRepresentable {
             webView.evaluateJavaScript("if(document.body) document.body.contentEditable = '\(editable ? "true" : "false")'")
             lastAnnotations = nil
             applyAnnotations()
+            installReadingPositionTracking()
+            restorePendingPosition()
             scrollToPendingFragment()
+        }
+
+        func restorePosition(_ position: SavedReadingPosition?, request: Int, chapterHref: String) {
+            savedPosition = position
+            positionRestoreRequest = request
+            self.chapterHref = chapterHref
+            restorePendingPosition()
+        }
+
+        private func restorePendingPosition() {
+            guard hasLoadedPage, positionRestoreRequest != lastRestoredPositionRequest,
+                  case .epub(let href, let fraction)? = savedPosition?.location, href == chapterHref,
+                  fraction.isFinite else { return }
+            lastRestoredPositionRequest = positionRestoreRequest
+            let value = min(1, max(0, fraction))
+            webView?.evaluateJavaScript("(() => { const h=Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight||0)-window.innerHeight; window.scrollTo(0,Math.max(0,h)*\(value)); })()")
+        }
+
+        private func installReadingPositionTracking() {
+            guard let data = try? JSONSerialization.data(withJSONObject: [chapterHref]),
+                  let hrefJSON = String(data: data, encoding: .utf8) else { return }
+            webView?.evaluateJavaScript("""
+            (() => {
+              const href=\(hrefJSON)[0]; let timer;
+              const send=()=>{ clearTimeout(timer); timer=setTimeout(()=>{
+                const h=Math.max(document.documentElement.scrollHeight,document.body?.scrollHeight||0)-window.innerHeight;
+                window.webkit.messageHandlers.epubReadingPosition.postMessage({href,fraction:h>0?window.scrollY/h:0});
+              },250); };
+              window.removeEventListener('scroll',window.__mdstudioReadPosition);
+              window.__mdstudioReadPosition=send;
+              window.addEventListener('scroll',send,{passive:true}); send();
+            })()
+            """)
         }
 
         func setAnnotations(_ value: [EPUBAnnotation], jumpID: String?, jumpRequest: Int, chapterHref: String) {
@@ -468,6 +521,12 @@ struct EPUBChapterView: NSViewRepresentable {
 private final class EPUBReaderWebView: WKWebView {
     var allowsChapterNavigation = false
     var onNavigateChapter: ((Int) -> Void)?
+    var onActivate: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onActivate?()
+        super.mouseDown(with: event)
+    }
 
     override func keyDown(with event: NSEvent) {
         let navigationModifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
@@ -482,6 +541,67 @@ private final class EPUBReaderWebView: WKWebView {
             onNavigateChapter?(1)
         default:
             super.keyDown(with: event)
+        }
+    }
+}
+
+struct EPUBArrowKeyMonitor: NSViewRepresentable {
+    let isEnabled: Bool
+    let onNavigateChapter: (Int) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.installIfNeeded()
+        context.coordinator.update(isEnabled: isEnabled, onNavigateChapter: onNavigateChapter)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.installIfNeeded()
+        context.coordinator.update(isEnabled: isEnabled, onNavigateChapter: onNavigateChapter)
+    }
+
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        coordinator.removeMonitor()
+    }
+
+    @MainActor
+    final class Coordinator {
+        private var monitor: Any?
+        private var isEnabled = false
+        private var onNavigateChapter: (Int) -> Void = { _ in }
+
+        func update(isEnabled: Bool, onNavigateChapter: @escaping (Int) -> Void) {
+            self.isEnabled = isEnabled
+            self.onNavigateChapter = onNavigateChapter
+        }
+
+        func installIfNeeded() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, self.isEnabled, NSApp.isActive,
+                      event.window != nil, event.window === NSApp.keyWindow,
+                      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else {
+                    return event
+                }
+                switch event.keyCode {
+                case 123:
+                    self.onNavigateChapter(-1)
+                    return nil
+                case 124:
+                    self.onNavigateChapter(1)
+                    return nil
+                default:
+                    return event
+                }
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
         }
     }
 }

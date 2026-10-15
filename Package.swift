@@ -17,6 +17,7 @@ let package = Package(
         .product(name: "Markdown", package: "swift-markdown"),
         "EPUBCore"
         ]),
-        .testTarget(name: "EPUBCoreTests", dependencies: ["EPUBCore", .product(name: "ZIPFoundation", package: "ZIPFoundation")])
+        .testTarget(name: "EPUBCoreTests", dependencies: ["EPUBCore", .product(name: "ZIPFoundation", package: "ZIPFoundation")]),
+        .testTarget(name: "MarkdownReaderTests", dependencies: ["MarkdownReader", "EPUBCore"])
     ]
 )
