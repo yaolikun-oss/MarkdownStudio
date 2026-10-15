@@ -59,7 +59,32 @@ struct ReaderWebView: NSViewRepresentable {
             context.coordinator.hasLoadedPage = false
             context.coordinator.pendingScrollID = nil
             context.coordinator.pendingSourceLine = sourceLineTarget
-            webView.loadHTMLString(html, baseURL: baseURL)
+            if let baseURL, baseURL.isFileURL {
+                // WKWebView does not grant file access to relative images loaded
+                // through loadHTMLString, even when that URL is supplied as baseURL.
+                // Loading a temporary page from the note's own directory grants
+                // access to its adjacent image assets without broad filesystem access.
+                let previewURL = baseURL.appendingPathComponent(".mdstudio-preview-\(UUID().uuidString).html")
+                do {
+                    try Data(html.utf8).write(to: previewURL, options: .atomic)
+                    let abandonedPreviewURL = context.coordinator.pendingPreviewURL
+                    context.coordinator.pendingPreviewURL = previewURL
+                    webView.loadFileURL(previewURL, allowingReadAccessTo: baseURL)
+                    if let abandonedPreviewURL { try? FileManager.default.removeItem(at: abandonedPreviewURL) }
+                } catch {
+                    if let abandonedPreviewURL = context.coordinator.pendingPreviewURL {
+                        try? FileManager.default.removeItem(at: abandonedPreviewURL)
+                    }
+                    context.coordinator.pendingPreviewURL = nil
+                    webView.loadHTMLString(html, baseURL: baseURL)
+                }
+            } else {
+                if let abandonedPreviewURL = context.coordinator.pendingPreviewURL {
+                    try? FileManager.default.removeItem(at: abandonedPreviewURL)
+                }
+                context.coordinator.pendingPreviewURL = nil
+                webView.loadHTMLString(html, baseURL: baseURL)
+            }
         }
         if context.coordinator.requestedReaderWidth != readerWidth {
             context.coordinator.requestedReaderWidth = readerWidth
@@ -143,15 +168,24 @@ struct ReaderWebView: NSViewRepresentable {
         var requestedReaderWidth = 720.0
         var onSourceLineChange: ((Int) -> Void)?
         weak var webView: WKWebView?
+        var pendingPreviewURL: URL?
         private var lastReportedLine = 0
         private var scrollSampleSequence = 0
         private var scrollObserver: NSObjectProtocol?
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            // All ordinary Markdown image requests have completed by didFinish.
+            // Remove the generated page so it never lingers beside a note.
+            if let pendingPreviewURL { try? FileManager.default.removeItem(at: pendingPreviewURL) }
+            pendingPreviewURL = nil
             hasLoadedPage = true
             applyReaderWidthIfReady(in: webView)
             scrollIfReady(in: webView)
             scrollToSourceLineIfReady(in: webView)
+        }
+
+        deinit {
+            if let pendingPreviewURL { try? FileManager.default.removeItem(at: pendingPreviewURL) }
         }
 
         func applyReaderWidthIfReady(in webView: WKWebView) {

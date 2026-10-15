@@ -13,6 +13,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     let focusRequest: Int
     let onSourceLineChange: (Int) -> Void
     let onActivate: () -> Void
+    let onImagePaste: (NSPasteboard, NSTextView) -> Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, selection: $selection, headingStyles: headingStyles, bodyColorHex: bodyColorHex, strongColorHex: strongColorHex, onSourceLineChange: onSourceLineChange)
@@ -24,6 +25,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         textView.onTablePaste = { [weak coordinator = context.coordinator] table, textView in
             coordinator?.pasteTable(table, into: textView)
         }
+        textView.onImagePaste = onImagePaste
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.allowsUndo = true
@@ -68,6 +70,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
         (textView as? MarkdownSourceTextView)?.onActivate = onActivate
+        (textView as? MarkdownSourceTextView)?.onImagePaste = onImagePaste
         // SwiftUI can redraw the representable while an input method is composing.
         // Replacing NSTextView's string or selection here discards the marked text,
         // which makes Chinese pinyin appear to require choosing a numbered candidate.
@@ -411,7 +414,17 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
 final class MarkdownSourceTextView: NSTextView {
     var onTablePaste: ((String, NSTextView) -> Void)?
+    var onImagePaste: ((NSPasteboard, NSTextView) -> Bool)?
+    var imagePasteboard: NSPasteboard = .general
     var onActivate: (() -> Void)?
+
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(paste(_:)), onImagePaste != nil,
+           MarkdownImageAssets.canImportClipboard(imagePasteboard) {
+            return true
+        }
+        return super.validateMenuItem(menuItem)
+    }
 
     override func mouseDown(with event: NSEvent) {
         onActivate?()
@@ -444,13 +457,14 @@ final class MarkdownSourceTextView: NSTextView {
     }
 
     override func paste(_ sender: Any?) {
-        let pasteboard = NSPasteboard.general
+        let pasteboard = imagePasteboard
         let plain = pasteboard.string(forType: .string) ?? ""
         let html = pasteboard.string(forType: .html)
         if let cells = MarkdownTableFormatter.parseClipboard(plain: plain, html: html) {
             onTablePaste?(MarkdownTableFormatter.markdown(cells), self)
             return
         }
+        if onImagePaste?(pasteboard, self) == true { return }
         super.paste(sender)
     }
 }

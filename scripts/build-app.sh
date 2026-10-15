@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_PATH="$PROJECT_ROOT/dist/MarkdownStudio.app"
-RELEASE_VERSION="0.5.9"
+RELEASE_VERSION="0.6.1"
 ARM_BUILD="$PROJECT_ROOT/.build-arm64"
 INTEL_BUILD="$PROJECT_ROOT/.build-x86_64"
 
@@ -36,8 +36,8 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key><string>Markdown Studio</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.5.9</string>
-    <key>CFBundleVersion</key><string>35</string>
+    <key>CFBundleShortVersionString</key><string>0.6.1</string>
+    <key>CFBundleVersion</key><string>37</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>LSMultipleInstancesProhibited</key><true/>

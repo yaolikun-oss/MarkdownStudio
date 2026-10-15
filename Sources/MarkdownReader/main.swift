@@ -105,6 +105,8 @@ struct MarkdownReaderApp: App {
                 Button("链接") { ReaderActions.applyInlineSyntax("[", "](链接地址)") }
                     .keyboardShortcut("l", modifiers: [.command, .control])
                 Menu("图片") {
+                    Button("插入图片文件…") { ReaderActions.insertImageFile() }
+                        .keyboardShortcut("i", modifiers: [.command, .option])
                     Button("插入图片语法") { ReaderActions.insertTemplate("![替代文字](图片地址)") }
                 }
                 Divider()
@@ -180,6 +182,7 @@ enum ReaderActions {
     static var wrapSelectionHandler: ((String, String) -> Void)?
     static var clearLinePrefixHandler: (() -> Void)?
     static var insertTemplateHandler: ((String) -> Void)?
+    static var insertImageFileHandler: (() -> Void)?
     static var toggleEditPreviewHandler: (() -> Void)?
     static var toggleSplitModeHandler: (() -> Void)?
     static var openPreviewToSideHandler: (() -> Void)?
@@ -217,6 +220,7 @@ enum ReaderActions {
         pending.forEach(handler)
     }
     static func openSettings() { openSettingsHandler?() }
+    static func insertImageFile() { insertImageFileHandler?() }
     static func adjustBodySize(_ amount: Double) { adjustBodySizeHandler?(amount) }
     static func resetBodySize() { resetBodySizeHandler?() }
     static func adjustTypographySize(_ amount: Double) { adjustTypographySizeHandler?(amount) }
@@ -426,6 +430,8 @@ struct ReaderView: View {
     @State private var pdfCurrentPage = 0
     @State private var pdfNavigationRequest = 0
     @State private var pdfReadingPosition: PDFReadingPosition?
+    @State private var pdfProfileLoading = false
+    @State private var readingProfileLoadRevision = 0
     @State private var pendingPDFURL: URL?
     @State private var pdfPassword = ""
     @State private var showPDFPasswordPrompt = false
@@ -672,6 +678,7 @@ struct ReaderView: View {
             ReaderActions.wrapSelectionHandler = wrapSelection
             ReaderActions.clearLinePrefixHandler = clearLinePrefix
             ReaderActions.insertTemplateHandler = insertTemplate
+            ReaderActions.insertImageFileHandler = insertImageFile
             ReaderActions.toggleEditPreviewHandler = {
                 if (isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil), epubNotebookLayout == .epub {
                     epubNotebookLayout = .notes
@@ -752,7 +759,7 @@ struct ReaderView: View {
         .onChange(of: pdfCurrentPage) { _, value in pdfPageInput = "\(value + 1)" }
         .onChange(of: readingStyleSettings) { _, style in persistReadingProfile(style: style) }
         .onChange(of: pdfReadingPosition) { _, position in
-            guard let position else { return }
+            guard let position, !pdfProfileLoading else { return }
             let saved = SavedReadingPosition(location: .pdf(pageIndex: position.pageIndex,
                                                             x: Double(position.x), y: Double(position.y)))
             persistReadingProfile(position: saved)
@@ -1368,6 +1375,7 @@ struct ReaderView: View {
                       readingPosition: $pdfReadingPosition,
                       documentID: pdfSourceURL?.standardizedFileURL.path ?? document.documentURL?.standardizedFileURL.path ?? "",
                       navigationRequest: pdfNavigationRequest,
+                      isReadingProfileLoading: pdfProfileLoading,
                       backgroundColor: Color(hex: readerBackgroundHex),
                       onActivate: { activateWorkspaceArea(.pdf) })
             .background(Color(hex: readerBackgroundHex))
@@ -1653,23 +1661,31 @@ struct ReaderView: View {
 
     private func beginLoadingReadingProfile(for url: URL, sourceKind: ReadingSourceKind, title: String) {
         identityLoadTask?.cancel()
+        readingProfileLoadRevision += 1
+        let loadRevision = readingProfileLoadRevision
         currentBookID = nil
         currentBookProfile = nil
         savedEPUBPosition = nil
         epubAnnotations = []
         let initialStyle = readingStyleSettings
         let initialPDFNavigationRequest = pdfNavigationRequest
-        let initialPDFPosition = pdfReadingPosition
-        let initialPDFPage = pdfCurrentPage
+        if sourceKind == .pdf { pdfProfileLoading = true }
         let initialEPUBNavigationRequest = epubNavigationRequest
         let initialEPUBChapter = epubCurrentChapter
         let initialEPUBPosition = savedEPUBPosition
         identityLoadTask = Task { @MainActor in
+            defer {
+                if sourceKind == .pdf, readingProfileLoadRevision == loadRevision,
+                   activeBookURL?.standardizedFileURL == url.standardizedFileURL {
+                    pdfProfileLoading = false
+                }
+            }
             do {
                 let identity = try await Task.detached(priority: .utility) {
                     try ReadingDocumentIdentity.make(for: url)
                 }.value
-                guard !Task.isCancelled, activeBookURL?.standardizedFileURL == url.standardizedFileURL else { return }
+                guard !Task.isCancelled, readingProfileLoadRevision == loadRevision,
+                      activeBookURL?.standardizedFileURL == url.standardizedFileURL else { return }
                 let profile = try readingLibrary.loadProfile(documentID: identity)
                     ?? BookReadingProfile(documentID: identity, title: title, sourceKind: sourceKind)
                 currentBookID = identity
@@ -1682,8 +1698,9 @@ struct ReaderView: View {
                 if let position = profile.position {
                     switch (sourceKind, position.location) {
                     case (.pdf, .pdf(let pageIndex, let x, let y)):
-                        guard pdfNavigationRequest == initialPDFNavigationRequest,
-                              pdfReadingPosition == initialPDFPosition, pdfCurrentPage == initialPDFPage else { break }
+                        // PDFKit reports page 1 while its view is being laid out. That is not
+                        // a user navigation and must not suppress the saved location.
+                        guard pdfNavigationRequest == initialPDFNavigationRequest else { break }
                         let safeIndex = min(max(0, pageIndex), max(0, (pdfDocument?.pageCount ?? 1) - 1))
                         pdfCurrentPage = safeIndex
                         pdfReadingPosition = PDFReadingPosition(
@@ -1760,15 +1777,17 @@ struct ReaderView: View {
     private func clearReadingProfileSelection() {
         flushCurrentReadingProfile()
         identityLoadTask?.cancel()
+        readingProfileLoadRevision += 1
         identityLoadTask = nil
         currentBookID = nil
         currentBookProfile = nil
+        pdfProfileLoading = false
         savedEPUBPosition = nil
         epubAnnotations = []
     }
 
     private var currentSavedPosition: SavedReadingPosition? {
-        if let position = pdfReadingPosition {
+        if !pdfProfileLoading, let position = pdfReadingPosition {
             return SavedReadingPosition(location: .pdf(pageIndex: position.pageIndex,
                                                        x: Double(position.x), y: Double(position.y)))
         }
@@ -1876,7 +1895,8 @@ struct ReaderView: View {
                                  sourceLineRequest: sourceLineRequest,
                                  focusRequest: editorFocusRequest,
                                  onSourceLineChange: synchronizeSourceLine,
-                                 onActivate: { activateWorkspaceArea(.markdownEditor) })
+                                 onActivate: { activateWorkspaceArea(.markdownEditor) },
+                                 onImagePaste: pasteImage)
                 .background(Color(nsColor: .textBackgroundColor))
                 .disabled(selectedFile == nil)
                 .overlay {
@@ -2716,6 +2736,47 @@ struct ReaderView: View {
         source = original.replacingCharacters(in: NSRange(location: location, length: length), with: template)
         editorSelection = NSRange(location: location + (template as NSString).length, length: 0)
         editorFocusRequest += 1
+    }
+
+    private func pasteImage(_ pasteboard: NSPasteboard, into textView: NSTextView) -> Bool {
+        guard let selectedFile else { return false }
+        do {
+            guard let markdown = try MarkdownImageAssets.importClipboard(pasteboard, beside: selectedFile) else { return false }
+            let range = textView.selectedRange()
+            let insertion = MarkdownImageAssets.blockInsertion(markdown, in: textView.string, replacing: range)
+            textView.insertText(insertion, replacementRange: range)
+            return true
+        } catch {
+            saveError = "无法粘贴图片：\(error.localizedDescription)"
+            return true
+        }
+    }
+
+    private func insertImageFile() {
+        guard let selectedFile else {
+            saveError = "请先打开或新建 Markdown 笔记，再插入图片。"
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .gif]
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = selectedFile.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let imageURL = panel.url else { return }
+        do {
+            let markdown = try MarkdownImageAssets.importFile(imageURL, beside: selectedFile)
+            let original = source as NSString
+            let location = min(editorSelection.location, original.length)
+            let length = min(editorSelection.length, original.length - location)
+            let range = NSRange(location: location, length: length)
+            let insertion = MarkdownImageAssets.blockInsertion(markdown, in: source, replacing: range)
+            source = original.replacingCharacters(in: range, with: insertion)
+            editorSelection = NSRange(location: location + (insertion as NSString).length, length: 0)
+            if displayMode == .read { displayMode = .edit }
+            if epubNotebookLayout == .epub { epubNotebookLayout = .stacked }
+            editorFocusRequest += 1
+        } catch {
+            saveError = "无法插入图片：\(error.localizedDescription)"
+        }
     }
 
     private func scheduleParse(for text: String) {

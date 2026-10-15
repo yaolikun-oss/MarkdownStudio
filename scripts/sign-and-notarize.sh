@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_PATH="$PROJECT_ROOT/dist/MarkdownStudio.app"
-VERSION="0.5.9"
+VERSION="0.6.1"
 ZIP_PATH="$PROJECT_ROOT/dist/MarkdownStudio-$VERSION-notary.zip"
 DMG_PATH="$PROJECT_ROOT/dist/MarkdownStudio-$VERSION.dmg"
 

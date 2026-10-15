@@ -9,6 +9,7 @@ struct PDFReaderView: NSViewRepresentable {
     @Binding var readingPosition: PDFReadingPosition?
     let documentID: String
     let navigationRequest: Int
+    let isReadingProfileLoading: Bool
     let backgroundColor: Color
     let onActivate: () -> Void
 
@@ -41,8 +42,8 @@ struct PDFReaderView: NSViewRepresentable {
             view.autoScales = true
             context.coordinator.lastNavigationRequest = navigationRequest
             context.coordinator.restoredDocumentID = nil
-            readingPosition = nil
-            currentPageIndex = 0
+            // The owner resets these when opening a new PDF. Clearing them here
+            // can erase a profile that finished loading before this view update.
         }
 
         if !isFirstUpdate && context.coordinator.lastNavigationRequest != navigationRequest {
@@ -63,11 +64,15 @@ struct PDFReaderView: NSViewRepresentable {
            let readingPosition, readingPosition.documentID == documentID {
             context.coordinator.restoreReadingPosition(readingPosition, in: view)
             context.coordinator.restoredDocumentID = documentID
+        } else if context.coordinator.wasReadingProfileLoading && !isReadingProfileLoading {
+            context.coordinator.schedulePositionSave()
         }
+        context.coordinator.wasReadingProfileLoading = isReadingProfileLoading
     }
 
     static func dismantleNSView(_ view: PDFView, coordinator: Coordinator) {
-        if let position = coordinator.readingPosition(in: view) {
+        if !coordinator.parent.isReadingProfileLoading,
+           let position = coordinator.readingPosition(in: view) {
             let positionBinding = coordinator.parent.$readingPosition
             DispatchQueue.main.async { positionBinding.wrappedValue = position }
         }
@@ -81,6 +86,7 @@ struct PDFReaderView: NSViewRepresentable {
         var lastNavigationRequest = -1
         var lastAppliedZoom = 100.0
         var restoredDocumentID: String?
+        var wasReadingProfileLoading = false
         private var observers: [NSObjectProtocol] = []
         private var positionSaveTask: Task<Void, Never>?
 
@@ -129,8 +135,10 @@ struct PDFReaderView: NSViewRepresentable {
 
         func restoreReadingPosition(_ position: PDFReadingPosition?, in view: PDFView) {
             guard let position, position.documentID == parent.documentID else { return }
+            positionSaveTask?.cancel()
             DispatchQueue.main.async { [weak self, weak view] in
                 guard let self, let view,
+                      self.parent.documentID == position.documentID,
                       let page = view.document?.page(at: position.pageIndex) else { return }
                 view.layoutSubtreeIfNeeded()
                 let destination = PDFDestination(page: page, at: NSPoint(x: position.x, y: position.y))
@@ -140,11 +148,19 @@ struct PDFReaderView: NSViewRepresentable {
         }
 
         func readingPosition(in view: PDFView) -> PDFReadingPosition? {
-            guard let destination = view.currentDestination,
-                  let page = destination.page,
-                  let document = view.document else { return nil }
+            guard let page = view.currentPage, let document = view.document else { return nil }
             let pageIndex = document.index(for: page)
-            let point = destination.point
+            // In continuous mode, currentDestination can still refer to the
+            // preceding page while currentPage (and the toolbar) have advanced.
+            // Keep the stored page consistent with the visible page.
+            let point: NSPoint
+            if let destination = view.currentDestination, destination.page === page,
+               destination.point.x.isFinite, destination.point.y.isFinite {
+                point = destination.point
+            } else {
+                let bounds = page.bounds(for: view.displayBox)
+                point = NSPoint(x: bounds.minX, y: bounds.maxY)
+            }
             guard pageIndex >= 0, point.x.isFinite, point.y.isFinite else { return nil }
             return PDFReadingPosition(documentID: parent.documentID, pageIndex: pageIndex,
                                       x: point.x, y: point.y)
@@ -158,7 +174,8 @@ struct PDFReaderView: NSViewRepresentable {
             schedulePositionSave()
         }
 
-        private func schedulePositionSave() {
+        func schedulePositionSave() {
+            guard !parent.isReadingProfileLoading else { return }
             positionSaveTask?.cancel()
             positionSaveTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(350))
