@@ -1,0 +1,16 @@
+{
+  "version": "0.1.2",
+  "target": "win32-x64",
+  "bytes": 156142576,
+  "sha256": "c3a0ea6a5236717b7dfa9e2a02c556a89ba459d789e14e6080ac41c2d6d08478",
+  "zipIntegrity": "passed",
+  "PEMachine": "0x8664",
+  "asarVersion": "0.1.0",
+  "asarBundledFiles": 216,
+  "nativeWindowsExecution": "NOT_TESTED",
+  "codeSigning": "UNSIGNED_PREVIEW",
+  "automatedTests": {
+    "passed": 28,
+    "failed": 0
+  }
+}

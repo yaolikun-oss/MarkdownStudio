@@ -102,7 +102,7 @@ struct ReaderWebView: NSViewRepresentable {
         }
     }
 
-    private var pageHTML: String {
+    var pageHTML: String {
         let safeStrongColor = Self.safeHex(strongColorHex, fallback: "#A5563A")
         let safeBodyColor = Self.safeHex(bodyColorHex, fallback: "#282725")
         let safeBackgroundColor = Self.safeHex(readerBackgroundHex, fallback: "#FFFFFF")
@@ -121,11 +121,14 @@ struct ReaderWebView: NSViewRepresentable {
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file: data:; style-src 'unsafe-inline'; font-src 'none'; media-src file:;">
         <style>
         *{box-sizing:border-box}html{scroll-behavior:smooth;background:\(safeBackgroundColor)}body{margin:0;background:\(safeBackgroundColor);color:\(safeBodyColor);font-family:\(safeBodyFamily);font-size:\(Int(bodySize))px;line-height:\(String(format: "%.2f", lineHeight))}
-        main{max-width:1116px;margin:0 auto;padding:38px 38px 100px;overflow-wrap:anywhere}
+        main{max-width:1116px;margin:0 auto;padding:38px 38px max(100px, 50vh);overflow-wrap:anywhere}
         h1,h2,h3,h4,h5,h6{line-height:1.4;letter-spacing:-.02em;scroll-margin-top:24px;margin-left:0;margin-right:0}
         h1{margin-top:6px;margin-bottom:16px}h2,h3,h4,h5,h6{margin-top:27px;margin-bottom:10px}
-        h1,h2{padding-bottom:.18em;border-bottom:1px solid #E7E4E0}
-        p{margin:9px 0 \(Int(paragraphSpacing))px}em,i{font-style:italic}strong{color:\(safeStrongColor);font-family:\(safeStrongFamily);font-size:\(Int(strongSize))px;font-weight:650}h1 strong,h2 strong,h3 strong,h4 strong,h5 strong,h6 strong{font-size:inherit}
+        h2,h3{padding-bottom:.18em;border-bottom:1px solid #E7E4E0}
+        p{margin:9px 0 \(Int(paragraphSpacing))px}em,i{font-style:italic}
+        strong,b{color:\(safeStrongColor);font-family:\(safeStrongFamily);font-size:\(Int(strongSize))px;font-weight:650}
+        span[style*="font-weight: bold" i],span[style*="font-weight:bold" i],span[style*="font-weight: 6"],span[style*="font-weight:6"],span[style*="font-weight: 7"],span[style*="font-weight:7"],span[style*="font-weight: 8"],span[style*="font-weight:8"],span[style*="font-weight: 9"],span[style*="font-weight:9"]{color:\(safeStrongColor)!important;font-family:\(safeStrongFamily);font-size:\(Int(strongSize))px;font-weight:650}
+        h1 strong,h2 strong,h3 strong,h4 strong,h5 strong,h6 strong,h1 b,h2 b,h3 b,h4 b,h5 b,h6 b{font-size:inherit}
         a{color:#5C708A;text-decoration:none}a:hover{text-decoration:underline}
         ul,ol{padding-left:1.55em;margin:10px 0 16px}li{padding-left:.18em;margin:4px 0}li>p{margin:3px 0}
         blockquote{margin:18px 0;padding:4px 0 4px 17px;border-left:2px solid #D9D4CD;color:#69655F}

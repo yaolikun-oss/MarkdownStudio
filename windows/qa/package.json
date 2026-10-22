@@ -1,0 +1,19 @@
+{
+  "version": "0.1.3",
+  "date": "2026-10-22",
+  "bytes": 156147549,
+  "sha256": "9d3cabc14d23d6f213cf0aa7a44ee262566f0024a3e2fc27a7e999067803dd0d",
+  "tests": {
+    "passed": 33,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nativeWindowsExecution": "NOT_TESTED",
+  "macInterfaceChecks": [
+    "EPUB background and max width",
+    "independent heading controls",
+    "vector PDF dynamic best display",
+    "raster PDF native-pixel best display"
+  ],
+  "file": "windows/release/MarkdownStudio-Windows-0.1.3-x64.zip"
+}

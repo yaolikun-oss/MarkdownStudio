@@ -55,8 +55,11 @@ public final class EPUBPackageDocument {
         try? FileManager.default.removeItem(at: workingDirectory)
     }
 
-    public static func open(_ sourceURL: URL) throws -> EPUBPackageDocument {
+    /// `bookURL` may be a temporary EPUB converted from another format. Keep
+    /// `sourceURL` as the original book for reading identity and note naming.
+    public static func open(_ sourceURL: URL, bookURL: URL? = nil) throws -> EPUBPackageDocument {
         let fileManager = FileManager.default
+        let packageSourceURL = bookURL ?? sourceURL
         let support = try fileManager.url(for: .cachesDirectory, in: .userDomainMask,
                                           appropriateFor: nil, create: true)
             .appendingPathComponent("MarkdownStudio/EPUB", isDirectory: true)
@@ -64,16 +67,16 @@ public final class EPUBPackageDocument {
         let work = support.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try fileManager.createDirectory(at: work, withIntermediateDirectories: true)
         do {
-            let sourceIsDirectory = (try? sourceURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            let sourceIsDirectory = (try? packageSourceURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
             if sourceIsDirectory {
-                let container = sourceURL.appendingPathComponent("META-INF/container.xml")
+                let container = packageSourceURL.appendingPathComponent("META-INF/container.xml")
                 guard fileManager.fileExists(atPath: container.path) else {
                     throw EPUBPackageError.invalidContainer
                 }
-                try copyUnpackedPackage(from: sourceURL, to: work)
+                try copyUnpackedPackage(from: packageSourceURL, to: work)
             } else {
                 // ZIPFoundation rejects paths that escape the destination by default.
-                try fileManager.unzipItem(at: sourceURL, to: work)
+                try fileManager.unzipItem(at: packageSourceURL, to: work)
             }
             let containerURL = work.appendingPathComponent("META-INF/container.xml")
             guard let packagePath = try ContainerRootfileParser.parse(Data(contentsOf: containerURL)) else {
@@ -83,6 +86,15 @@ public final class EPUBPackageDocument {
             let packageData = try Data(contentsOf: packageURL)
             guard let package = try OPFPackageParser.parse(packageData) else {
                 throw EPUBPackageError.invalidPackage
+            }
+            if bookURL != nil {
+                // Converted books must not open with silently missing resources.
+                for item in package.items.values {
+                    let resource = try resourceURL(item.href, relativeTo: packageURL.deletingLastPathComponent(), within: work)
+                    guard fileManager.fileExists(atPath: resource.path) else {
+                        throw EPUBPackageError.invalidPackage
+                    }
+                }
             }
 
             let encryptedURL = work.appendingPathComponent("META-INF/encryption.xml")
@@ -100,6 +112,11 @@ public final class EPUBPackageDocument {
                 return EPUBChapter(id: id, title: fallback, href: item.href, fileURL: fileURL)
             }
             guard !chapters.isEmpty else { throw EPUBPackageError.noReadableChapters }
+            // A converted book must not silently drop a spine entry. Native
+            // EPUBs retain the existing permissive behavior for unusual media.
+            if bookURL != nil && chapters.count != package.spine.count {
+                throw EPUBPackageError.noReadableChapters
+            }
 
             var toc: [EPUBTOCItem] = []
             var navigationBaseDirectory = packageURL.deletingLastPathComponent()

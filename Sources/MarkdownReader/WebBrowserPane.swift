@@ -377,6 +377,7 @@ private struct WebPageView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        WorkspaceKeyboardFocus.readingView = view
         (view as? ActivatingBrowserWebView)?.onActivate = onActivate
         if context.coordinator.requestedURL != session.currentURL, let url = session.currentURL {
             context.coordinator.requestedURL = url

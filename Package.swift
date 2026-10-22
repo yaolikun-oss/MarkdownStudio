@@ -14,10 +14,13 @@ let package = Package(
             .product(name: "ZIPFoundation", package: "ZIPFoundation")
         ]),
         .executableTarget(name: "MarkdownReader", dependencies: [
+        .product(name: "ZIPFoundation", package: "ZIPFoundation"),
         .product(name: "Markdown", package: "swift-markdown"),
         "EPUBCore"
         ]),
         .testTarget(name: "EPUBCoreTests", dependencies: ["EPUBCore", .product(name: "ZIPFoundation", package: "ZIPFoundation")]),
-        .testTarget(name: "MarkdownReaderTests", dependencies: ["MarkdownReader", "EPUBCore"])
+        .testTarget(name: "MarkdownReaderTests", dependencies: [
+            "MarkdownReader", "EPUBCore", .product(name: "ZIPFoundation", package: "ZIPFoundation")
+        ])
     ]
 )

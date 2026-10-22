@@ -28,7 +28,11 @@ struct LocalMarkdownDocumentStore: MarkdownDocumentEditing {
 
     func listMarkdownDocuments(in folder: URL) throws -> [URL] {
         let keys: [URLResourceKey] = [.isRegularFileKey]
-        let found = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])?.allObjects as? [URL] ?? []
+        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: keys,
+                                                              options: [.skipsHiddenFiles]) else {
+            throw CocoaError(.fileReadNoPermission, userInfo: [NSFilePathErrorKey: folder.path])
+        }
+        let found = enumerator.allObjects as? [URL] ?? []
         return found.filter { ["md", "markdown"].contains($0.pathExtension.lowercased()) }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }

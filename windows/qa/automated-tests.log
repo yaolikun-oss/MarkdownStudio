@@ -1,0 +1,47 @@
+
+> markdown-studio-windows@0.1.3 test
+> node --test tests/*.test.mjs
+
+✔ reading, visual and source style settings are independent (0.711458ms)
+✔ preferences clamp corrupt sizes and reject dangerous bookmark URLs (0.561458ms)
+✔ atomic save retains Unicode source and no temporary files (15.046084ms)
+✔ external modifications and deletion cannot be overwritten (6.04275ms)
+✔ readonly original formats cannot be saved through note writer (0.324291ms)
+✔ existing save destinations require explicit known hash (1.855125ms)
+✔ image authorization prevents traversal, symlink escapes and non-images (2.782708ms)
+✔ web navigation disallows local schemes, passwords and malformed spaces (0.386291ms)
+✔ recent files retain exact reading/note pairing, deduplicate and cap at twenty (0.250458ms)
+✔ format routing recognizes case-insensitive supported formats and rejects WPS (0.121209ms)
+✔ switching unedited visual and source modes never rewrites original bytes (40.427042ms)
+✔ visual bold and underline remain inline in one paragraph after serialization (11.531792ms)
+✔ fifth-level heading after a bullet list exits list nesting and retains heading syntax (10.16025ms)
+✔ unsupported constructs block visual mutation instead of silently losing source (50.289667ms)
+✔ long source documents keep direct left/right and undo state, without source truncation (58.306542ms)
+✔ syntax highlighting stays configured after source insertions (39.2205ms)
+✔ bold around Chinese and English closing parentheses survives a fresh parse (35.814166ms)
+✔ loading a file and rendering readonly state do not signal document modifications (14.205708ms)
+✔ semantic cursor anchors retain the exact offset across headings, bold and underline (0.099875ms)
+✔ overlapping underline and bold marks do not create paragraphs or lose content (17.889625ms)
+✔ repeated paragraph anchors choose the nearby occurrence instead of jumping to the first (0.269416ms)
+✔ long-document cursor returns to the exact source character after a visual round trip (4117.273459ms)
+✔ identical paragraphs near document end retain their occurrence and exact caret (8813.057708ms)
+(node:16877) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ EPUB archive parser retains both chapters and navigation with modern XML parser (23.893125ms)
+✔ DOCX renderer preserves two explicit pages, Chinese text and table cells (25.476333ms)
+✔ extended style migration retains manual settings independently and sanitizes CSS input (0.900125ms)
+✔ EPUB injected stylesheet applies background, font, paragraph and title rules after zoom (0.174959ms)
+✔ visual style changes are scoped to editor host and retain independent title sizes (59.654333ms)
+✔ best PDF recalculates from display DPR for raster and both viewport dimensions for vector (0.1405ms)
+✔ address normalization accepts bare hosts, ports, paths, Chinese and protocol-relative URLs (3.600459ms)
+✔ fast splitter drag commits the release point even when no final move event arrives (97.501417ms)
+✔ splitter continues outside the handle and removes its document listeners after release (6.667333ms)
+✔ pointer cancellation does not apply a bogus release position (5.620792ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13863.900708

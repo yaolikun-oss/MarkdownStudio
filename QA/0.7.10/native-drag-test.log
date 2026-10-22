@@ -1,0 +1,11 @@
+Building for debugging...
+[Using on-disk description]
+Build complete! (0.27秒)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite NotebookSplitViewTests started.
+◇ Test nativeDragStartsBesideTheThinLineAndSavesOnlyAfterRelease() started.
+✔ Test nativeDragStartsBesideTheThinLineAndSavesOnlyAfterRelease() passed after 0.055 seconds.
+✔ Suite NotebookSplitViewTests passed after 0.055 seconds.
+✔ Test run with 1 test in 1 suite passed after 0.055 seconds.

@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 @main
 struct MarkdownReaderApp: App {
+    init() { WorkspacePreferenceUpgrade.importPreviousDefaultsIfNeeded() }
     @NSApplicationDelegateAdaptor(ReaderAppDelegate.self) private var appDelegate
     var body: some Scene {
         WindowGroup(id: "main") {
@@ -25,7 +26,9 @@ struct MarkdownReaderApp: App {
                 Button("打开文件夹…") { ReaderActions.openFolder() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
-                Button("关闭当前文件") { ReaderActions.closeFile() }
+                Button("关闭当前区域的文件") { ReaderActions.closeFile() }
+                Button("关闭阅读源") { ReaderActions.closeReadingSource() }
+                Button("关闭 Markdown 笔记") { ReaderActions.closeNote() }
                 Button("关闭文件夹") { ReaderActions.closeFolder() }
             }
             CommandMenu("阅读") {
@@ -40,11 +43,13 @@ struct MarkdownReaderApp: App {
                     .keyboardShortcut("0", modifiers: [.command])
             }
             CommandMenu("模式") {
-                Button("阅读器") { ReaderActions.setDisplayMode(.read) }
+                Button("切换阅读 / 编辑区域") { ReaderActions.toggleReadingEditingFocusHandler?() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("所见即所得") { ReaderActions.setDisplayMode(.read) }
                 Button("编辑器") { ReaderActions.setDisplayMode(.edit) }
                 Button("左右分栏") { ReaderActions.setDisplayMode(.split) }
                 Divider()
-                Button("切换阅读 / 编辑") { ReaderActions.toggleEditPreview() }
+                Button("切换所见即所得 / 源码") { ReaderActions.toggleEditPreview() }
                     .keyboardShortcut("r", modifiers: [.command])
             }
             CommandMenu("阅读工作区") {
@@ -52,18 +57,18 @@ struct MarkdownReaderApp: App {
                     .keyboardShortcut("1", modifiers: [.command, .control])
                 Button("只看 Markdown 笔记") { ReaderActions.setEPUBNotebookLayout(.notes) }
                     .keyboardShortcut("2", modifiers: [.command, .control])
-                Button("阅读 + 笔记预览 + 编辑") { ReaderActions.setEPUBNotebookLayout(.stacked) }
+                Button("阅读 + 可视化笔记") { ReaderActions.setEPUBNotebookLayout(.stacked) }
                     .keyboardShortcut("3", modifiers: [.command, .control])
                 Divider()
                 Button("最大化原文面板") { ReaderActions.maximizeEPUBNotebookPane(.epub) }
                     .keyboardShortcut("1", modifiers: [.command, .shift])
-                Button("笔记预览占满右侧") { ReaderActions.maximizeEPUBNotebookPane(.rightPreview) }
+                Button("可视化笔记占满右侧") { ReaderActions.maximizeEPUBNotebookPane(.rightPreview) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
-                Button("笔记编辑占满右侧") { ReaderActions.maximizeEPUBNotebookPane(.rightEditor) }
+                Button("Markdown 源码占满右侧") { ReaderActions.maximizeEPUBNotebookPane(.rightEditor) }
                     .keyboardShortcut("3", modifiers: [.command, .option])
-                Button("最大化笔记预览面板") { ReaderActions.maximizeEPUBNotebookPane(.preview) }
+                Button("最大化可视化笔记面板") { ReaderActions.maximizeEPUBNotebookPane(.preview) }
                     .keyboardShortcut("2", modifiers: [.command, .shift])
-                Button("最大化笔记编辑面板") { ReaderActions.maximizeEPUBNotebookPane(.editor) }
+                Button("最大化 Markdown 源码面板") { ReaderActions.maximizeEPUBNotebookPane(.editor) }
                     .keyboardShortcut("3", modifiers: [.command, .shift])
                 Button("恢复三栏布局") { ReaderActions.restoreEPUBNotebookLayout() }
                     .keyboardShortcut("0", modifiers: [.command, .shift])
@@ -137,9 +142,9 @@ struct MarkdownReaderApp: App {
                     .keyboardShortcut("s", modifiers: [.command])
             }
             CommandGroup(replacing: .undoRedo) {
-                Button("撤销") { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) }
+                Button("撤销") { ReaderActions.undoRedo(isRedo: false) }
                     .keyboardShortcut("z", modifiers: [.command])
-                Button("重做") { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
+                Button("重做") { ReaderActions.undoRedo(isRedo: true) }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
             CommandMenu("视图") {
@@ -159,6 +164,7 @@ struct MarkdownReaderApp: App {
 
 @MainActor
 enum ReaderActions {
+    static var toggleReadingEditingFocusHandler: (() -> Void)?
     static var reopenWindowHandler: (() -> Void)?
     static var openFileHandler: (() -> Void)?
     static var openFolderHandler: (() -> Void)?
@@ -195,9 +201,22 @@ enum ReaderActions {
     static var insertTableHandler: (() -> Void)?
     static var insertHorizontalRuleHandler: (() -> Void)?
     static var closeFileHandler: (() -> Void)?
+    static var closeReadingSourceHandler: (() -> Void)?
+    static var closeNoteHandler: (() -> Void)?
     static var closeFolderHandler: (() -> Void)?
     static var terminationHandler: (() -> NSApplication.TerminateReply)?
     static var sidebarVisible = true
+    static func undoRedo(isRedo: Bool) {
+        if let editor = NSApp.keyWindow?.firstResponder as? MarkdownSourceTextView {
+            if isRedo { editor.undoManager?.redo() } else { editor.undoManager?.undo() }
+            return
+        }
+        if WorkspaceKeyboardFocus.containsFirstResponder(MarkdownVisualCommandHub.activeWebView) {
+            _ = MarkdownVisualCommandHub.perform(isRedo ? "redo" : "undo")
+            return
+        }
+        NSApp.sendAction(NSSelectorFromString(isRedo ? "redo:" : "undo:"), to: nil, from: nil)
+    }
     static func reopenWindow() { reopenWindowHandler?() }
     static func openFile() { openFileHandler?() }
     static func openFolder() { openFolderHandler?() }
@@ -212,6 +231,10 @@ enum ReaderActions {
             return
         }
         openDocumentHandler(url)
+    }
+    static func queueOpenDocumentForReopenedWindow(_ url: URL) {
+        pendingOpenDocuments.append(url)
+        reopenWindow()
     }
     static func setOpenDocumentHandler(_ handler: @escaping (URL) -> Void) {
         openDocumentHandler = handler
@@ -245,6 +268,8 @@ enum ReaderActions {
     static func insertTable() { insertTableHandler?() }
     static func insertHorizontalRule() { insertHorizontalRuleHandler?() }
     static func closeFile() { closeFileHandler?() }
+    static func closeReadingSource() { closeReadingSourceHandler?() }
+    static func closeNote() { closeNoteHandler?() }
     static func closeFolder() { closeFolderHandler?() }
     static func requestTermination() -> NSApplication.TerminateReply {
         terminationHandler?() ?? .terminateNow
@@ -253,24 +278,26 @@ enum ReaderActions {
 
 private enum PendingDocumentOperation {
     case open(URL)
-    case openFolder(URL)
-    case closeFile
-    case closePDF
-    case closeWeb
+    case openRecentWorkspace(RecentWorkspace)
+    case createNote(URL)
+    case openEPUBNote(URL, URL?)
+    case closeNote
+    case closeReadingSource
+    case closeWindow
     case terminate
 }
 
 enum ReaderDisplayMode: String, CaseIterable {
     case read, edit, split
     var title: String {
-        switch self { case .read: "阅读"; case .edit: "编辑"; case .split: "分栏" }
+        switch self { case .read: "可视化"; case .edit: "源码"; case .split: "分栏" }
     }
 }
 
 enum EPUBNotebookLayout: String, CaseIterable {
     case epub, notes, stacked
     var title: String {
-        switch self { case .epub: "原书"; case .notes: "笔记"; case .stacked: "上下" }
+        switch self { case .epub: "原书"; case .notes: "笔记"; case .stacked: "阅读 + 笔记" }
     }
 }
 
@@ -280,8 +307,8 @@ enum EPUBNotebookPane: String {
     var title: String {
         switch self {
         case .epub: "EPUB 原书"
-        case .preview: "Markdown 笔记预览"
-        case .editor: "Markdown 笔记编辑"
+        case .preview: "Markdown 笔记 · 可视化编辑"
+        case .editor: "Markdown 笔记 · 源码"
         case .rightPreview: "笔记预览占满右侧"
         case .rightEditor: "笔记编辑占满右侧"
         }
@@ -289,29 +316,65 @@ enum EPUBNotebookPane: String {
 }
 
 private enum PDFNotesLayout: String, CaseIterable {
-    case split, preview, editor
+    case visual, source
 
     var title: String {
         switch self {
-        case .split: "分屏"
-        case .preview: "预览占右侧"
-        case .editor: "编辑占右侧"
+        case .visual: "可视化笔记"
+        case .source: "Markdown 源码"
         }
     }
 }
 
 private enum FocusedWorkspaceArea {
-    case pdf, epub, web, markdownPreview, markdownEditor, markdownReader, outline
+    case pdf, epub, web, office, markdownPreview, markdownEditor, markdownReader, outline
 }
 
-private enum SidebarOutlineTab: String, CaseIterable {
-    case reading, markdown, webBookmarks
+private enum WorkspaceStyleScope: CaseIterable {
+    case reading, preview, source
 
     var title: String {
         switch self {
+        case .reading: "阅读样式"
+        case .preview: "MD 预览样式"
+        case .source: "MD 源码样式"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .reading: "阅读"
+        case .preview: "MD 可视化"
+        case .source: "MD 源码"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .reading: "book"
+        case .preview: "text.cursor"
+        case .source: "chevron.left.forwardslash.chevron.right"
+        }
+    }
+}
+
+private enum SidebarOutlineTab: String, CaseIterable {
+    case files, reading, markdown, webBookmarks
+
+    var title: String {
+        switch self {
+        case .files: "文件"
         case .reading: "阅读"
         case .markdown: "Markdown"
         case .webBookmarks: "网页收藏"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .files: "folder"
+        case .reading: "book"
+        case .markdown: "list.bullet.indent"
+        case .webBookmarks: "bookmark"
         }
     }
 }
@@ -334,7 +397,7 @@ private enum ReaderSheetRoute: Identifiable {
 enum FontSizeTarget {
     case body
     case outline
-    case pdf, web
+    case pdf, web, office
 }
 
 @MainActor
@@ -350,8 +413,16 @@ final class ReaderAppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let url = urls.first else { return }
+        if !application.windows.contains(where: { $0.isVisible }) {
+            ReaderActions.queueOpenDocumentForReopenedWindow(url)
+            return
+        }
         ReaderActions.openDocument(url)
     }
+}
+
+private final class EditorSelectionStorage {
+    var range = NSRange(location: 0, length: 0)
 }
 
 struct ReaderView: View {
@@ -362,6 +433,7 @@ struct ReaderView: View {
     @AppStorage("reader.sidebarWidth") private var sidebarWidth = 270.0
     @AppStorage("reader.bodySize") private var bodySize = 15.0
     @AppStorage("reader.outlineFontScale") private var outlineFontScale = 1.0
+    @AppStorage("markdown.sourceSyntaxHighlighting") private var sourceSyntaxHighlighting = true
     @AppStorage("reader.bodyFamily") private var bodyFamily = "系统默认"
     @AppStorage("reader.bodyColor") private var bodyColorHex = "#282725"
     @AppStorage("reader.backgroundColor") private var readerBackgroundHex = "#FFFFFF"
@@ -376,17 +448,25 @@ struct ReaderView: View {
     @AppStorage("reader.annotationTextColor") private var annotationTextColorHex = "#777777"
     @AppStorage("reader.headingStyles") private var headingStylesData = Data()
     @AppStorage("reader.outlineColors") private var outlineColorsData = Data()
+    @AppStorage("markdown.previewStyle.v1") private var previewStyleData = Data()
+    @AppStorage("markdown.previewTypographyDefaultsV2") private var previewTypographyDefaultsApplied = false
+    @AppStorage("markdown.sourceStyle.v1") private var sourceStyleData = Data()
     @AppStorage("reader.systemFontMigrationV1") private var systemFontMigrationDone = false
     @AppStorage("reader.lastFolder") private var lastFolderPath = ""
+    @AppStorage("reader.recentWorkspaces.v1") private var recentWorkspacesData = Data()
     @AppStorage("pdf.zoomPercent") private var pdfZoomPercent = 100.0
+    @AppStorage("office.zoomPercent") private var officeZoomPercent = 100.0
+    @State private var officeZoomInput = "100"
     @AppStorage("web.zoomPercent") private var webZoomPercent = 100.0
     @AppStorage("pdf.notesPaneWidth") private var notebookRightPaneWidth = 720.0
+    @AppStorage("markdown.previewPaneWidth") private var markdownPreviewPaneWidth = 720.0
     @AppStorage("pdf.notesVerticalRatio") private var notebookVerticalRatio = 0.5
 
     @State private var readingLibrary = ReadingLibraryStore.makeDefault()
     @StateObject private var webBrowser = WebBrowserSession()
     @State private var webBookmarks: [WebBookmark] = []
     @State private var activeSheet: ReaderSheetRoute?
+    @State private var settingsScope: WorkspaceStyleScope = .reading
     @State private var currentBookID: String?
     @State private var currentBookProfile: BookReadingProfile?
     @State private var savedEPUBPosition: SavedReadingPosition?
@@ -397,11 +477,19 @@ struct ReaderView: View {
     @State private var markdownFiles: [URL] = []
     @State private var selectedFile: URL?
     @State private var source = ""
-    @State private var editorSelection = NSRange(location: 0, length: 0)
+    // The caret moves far more often than the document changes. Keep its range
+    // outside SwiftUI's invalidation path so an arrow key or IME selection
+    // update does not rebuild the whole reader workspace.
+    @State private var editorSelectionStorage = EditorSelectionStorage()
+    private var editorSelection: NSRange {
+        get { editorSelectionStorage.range }
+        nonmutating set { editorSelectionStorage.range = newValue }
+    }
     @State private var savedSource = ""
     @State private var documentTitle = "选择一个 Markdown 文件开始阅读"
     @State private var headings: [MarkdownBlock] = []
     @State private var blocks: [MarkdownBlock] = []
+    @State private var parsedSource = ""
     @State private var expandedHeadings: Set<String> = []
     @State private var showSidebar = true
     @State private var fontSizeTarget: FontSizeTarget = .body
@@ -412,16 +500,26 @@ struct ReaderView: View {
     @State private var scrollRequest = 0
     @State private var synchronizedSourceLine = 1
     @State private var sourceLineRequest = 0
+    @State private var visualSourceLineRequest = 0
+    @State private var visualScrollState = MarkdownVisualScrollState()
+    @State private var visualRestoreRequest = 0
+    @State private var sourcePositionRestoreRequest = 0
     @State private var editorFocusRequest = 0
     @State private var readerWidthInput = "720"
+    @State private var previewWidthInput = "720"
+    @State private var sourceWidthInput = "720"
     @State private var epubReaderWidthInput = "720"
     @State private var pdfZoomInput = "100"
+    @State private var pdfDisplayPresetRequest = PDFDisplayPresetRequest(sequence: 0, preset: .fitWidth)
     @State private var webZoomInput = "100"
     @State private var pdfPageInput = "1"
     @State private var focusEditorAfterTableInsert = false
     @State private var displayMode: ReaderDisplayMode = .read
     @State private var parseTask: Task<Void, Never>?
     @State private var pendingDocumentOperation: PendingDocumentOperation?
+    @State private var pendingRecentWorkspace: RecentWorkspace?
+    @State private var suppressRecentRecording = false
+    @State private var pendingWindowToClose: NSWindow?
     @State private var showUnsavedAlert = false
     @State private var saveError: String?
     @State private var epubDocument: EPUBPackageDocument?
@@ -445,13 +543,31 @@ struct ReaderView: View {
     @State private var epubAnnotationJumpID: String?
     @State private var epubAnnotationJumpRequest = 0
     @State private var pendingEPUBURL: URL?
+    @State private var pendingConvertedEPUBURL: URL?
     @State private var showEPUBModeChoice = false
+    @State private var showCalibreInstallAlert = false
+    @State private var isConvertingKindle = false
+    @State private var kindleConversionRevision = 0
+    @State private var kindleConversionTask: Task<URL, Error>?
     @State private var isEPUBNotebook = false
     @State private var epubNotebookLayout: EPUBNotebookLayout = .stacked
+    @State private var officeDocumentURL: URL?
+    @State private var officePreviewState = OfficePreviewState()
+    @AppStorage("workspace.switchDisplay") private var usesSwitchDisplay = false
+    @State private var showsNotesTab = false
+
+    private var hasReadingSource: Bool {
+        officeDocumentURL != nil || pdfDocument != nil || epubDocument != nil || webBrowser.currentURL != nil
+    }
+    private var hasOpenWorkspace: Bool {
+        hasReadingSource || selectedFile != nil
+    }
+    private var hasNotebookReadingSource: Bool {
+        hasReadingSource && selectedFile != nil
+    }
+    private var activeReadingURL: URL? { officeDocumentURL ?? activeBookURL }
     @State private var maximizedNotebookPane: EPUBNotebookPane?
-    @State private var splitWidthSaveTask: Task<Void, Never>?
     @State private var splitHeightSaveTask: Task<Void, Never>?
-    @State private var sidebarWidthSaveTask: Task<Void, Never>?
 
     private var pdfZoomControlIsActive: Bool {
         pdfDocument != nil && focusedWorkspaceArea == .pdf
@@ -461,32 +577,144 @@ struct ReaderView: View {
         webBrowser.currentURL != nil && focusedWorkspaceArea == .web
     }
 
-    private var documentZoomControlIsActive: Bool { pdfZoomControlIsActive || webZoomControlIsActive }
+    private var officeZoomControlIsActive: Bool { officeDocumentURL != nil && focusedWorkspaceArea == .office }
+    private var documentZoomControlIsActive: Bool { pdfZoomControlIsActive || webZoomControlIsActive || officeZoomControlIsActive }
 
-    private var visibleSidebarTabs: [SidebarOutlineTab] {
-        [.reading, .markdown, .webBookmarks]
+    private var pdfZoomSliderBinding: Binding<Double> {
+        Binding(
+            get: { log(min(1000, max(25, pdfZoomPercent))) },
+            set: { pdfZoomPercent = min(1000, max(25, (exp($0) / 5).rounded() * 5)) }
+        )
     }
+
+    private var visibleSidebarTabs: [SidebarOutlineTab] { SidebarOutlineTab.allCases }
 
     private var epubWidthControlIsActive: Bool {
         focusedWorkspaceArea == .epub && (epubDocument != nil || isEPUBNotebook)
     }
 
+    private var readingMarkdownStyle: MarkdownDisplayStyle {
+        MarkdownDisplayStyle(readerWidth: readerWidth, outlineFontScale: outlineFontScale,
+                             bodySize: bodySize, bodyFamily: bodyFamily,
+                             bodyColorHex: bodyColorHex, backgroundHex: readerBackgroundHex,
+                             lineHeight: lineHeight, paragraphSpacing: paragraphSpacing,
+                             strongColorHex: strongColorHex, strongSize: strongSize,
+                             strongFamily: strongFamily, headingStylesData: headingStylesData,
+                             outlineColorsData: outlineColorsData)
+    }
+
+    private var initialSourceStyle: MarkdownDisplayStyle {
+        var result = readingMarkdownStyle
+        result.bodyFamily = "系统默认"
+        result.backgroundHex = "#FFFFFF"
+        result.lineHeight = Double(MarkdownSourceTypography.lineHeightMultiple)
+        result.paragraphSpacing = Double(MarkdownSourceTypography.paragraphSpacing)
+        return result
+    }
+
+    private var previewStyle: MarkdownDisplayStyle {
+        (try? JSONDecoder().decode(MarkdownDisplayStyle.self, from: previewStyleData)) ?? readingMarkdownStyle
+    }
+
+    private var sourceStyle: MarkdownDisplayStyle {
+        (try? JSONDecoder().decode(MarkdownDisplayStyle.self, from: sourceStyleData)) ?? initialSourceStyle
+    }
+
+    private func style(for scope: WorkspaceStyleScope) -> MarkdownDisplayStyle {
+        switch scope {
+        case .reading: readingMarkdownStyle
+        case .preview: previewStyle
+        case .source: sourceStyle
+        }
+    }
+
+    private func styleBinding<Value>(for scope: WorkspaceStyleScope,
+                                     keyPath: WritableKeyPath<MarkdownDisplayStyle, Value>,
+                                     reading: Binding<Value>) -> Binding<Value> {
+        guard scope != .reading else { return reading }
+        return Binding(get: { style(for: scope)[keyPath: keyPath] }, set: { value in
+            var updated = style(for: scope)
+            updated[keyPath: keyPath] = value
+            guard let data = try? JSONEncoder().encode(updated) else { return }
+            if scope == .preview { previewStyleData = data } else { sourceStyleData = data }
+        })
+    }
+
+    private var activeStyleScope: WorkspaceStyleScope {
+        switch focusedWorkspaceArea {
+        case .markdownEditor: .source
+        case .markdownPreview, .markdownReader: .preview
+        case .pdf, .epub, .web, .office: .reading
+        case .outline:
+            selectedFile == nil ? .reading : (displayMode == .edit ? .source : .preview)
+        }
+    }
+
+    private var toolbarTargetsReading: Bool {
+        switch focusedWorkspaceArea {
+        case .pdf, .epub, .web, .office:
+            true
+        case .markdownPreview, .markdownEditor, .markdownReader:
+            false
+        case .outline:
+            switch sidebarOutlineTab {
+            case .reading, .webBookmarks: true
+            case .markdown: false
+            case .files: hasReadingSource && selectedFile == nil
+            }
+        }
+    }
+
+    private var toolbarCloseTitle: String? {
+        if toolbarTargetsReading, hasReadingSource {
+            return webBrowser.currentURL == nil ? "关闭原文" : "关闭网页"
+        }
+        if !toolbarTargetsReading, selectedFile != nil { return "关闭笔记" }
+        return nil
+    }
+
+    private func closeToolbarDocument() {
+        if toolbarTargetsReading { closeReadingSource() }
+        else { closeNote() }
+    }
+
+    private var activeBodySizeBinding: Binding<Double> {
+        styleBinding(for: activeStyleScope, keyPath: \.bodySize, reading: $bodySize)
+    }
+
+    private var markdownOutlineScaleBinding: Binding<Double> {
+        styleBinding(for: .preview, keyPath: \.outlineFontScale, reading: $outlineFontScale)
+    }
+
     private var activeContentWidthBinding: Binding<Double> {
-        epubWidthControlIsActive ? $epubReaderWidth : $readerWidth
+        epubWidthControlIsActive ? $epubReaderWidth :
+            styleBinding(for: activeStyleScope, keyPath: \.readerWidth, reading: $readerWidth)
     }
 
     private var activeContentWidthInput: Binding<String> {
-        Binding(get: { epubWidthControlIsActive ? epubReaderWidthInput : readerWidthInput },
-                set: { if epubWidthControlIsActive { epubReaderWidthInput = $0 } else { readerWidthInput = $0 } })
+        Binding(get: {
+            if epubWidthControlIsActive { return epubReaderWidthInput }
+            switch activeStyleScope {
+            case .reading: return readerWidthInput
+            case .preview: return previewWidthInput
+            case .source: return sourceWidthInput
+            }
+        }, set: { value in
+            if epubWidthControlIsActive { epubReaderWidthInput = value; return }
+            switch activeStyleScope {
+            case .reading: readerWidthInput = value
+            case .preview: previewWidthInput = value
+            case .source: sourceWidthInput = value
+            }
+        })
     }
 
-    private var activeContentWidth: Double { epubWidthControlIsActive ? epubReaderWidth : readerWidth }
+    private var activeContentWidth: Double { activeContentWidthBinding.wrappedValue }
 
     private var pdfNotesLayout: PDFNotesLayout {
         switch maximizedNotebookPane {
-        case .rightPreview: .preview
-        case .rightEditor: .editor
-        default: .split
+        case .rightEditor: .source
+        default: .visual
         }
     }
 
@@ -524,21 +752,20 @@ struct ReaderView: View {
     }
 
     var body: some View {
-        HSplitView {
-            if showSidebar {
-                sidebar
-                    .frame(minWidth: 190, idealWidth: sidebarWidth, maxWidth: 480)
-                    .background(GeometryReader { proxy in
-                        Color.clear.preference(key: SidebarWidthPreferenceKey.self, value: proxy.size.width)
-                    })
-            }
+        HStack(spacing: 0) {
+        navigationRail
+        WorkspaceSidebarSplitView(sidebar: AnyView(sidebar), content: AnyView(
             VStack(spacing: 0) {
                 toolbar
+                if hasOpenWorkspace {
+                    workspaceLayoutBar
+                }
                 Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
                 documentPane
-            }
+            }), sidebarWidth: CGFloat(sidebarWidth), showsSidebar: showSidebar,
+            onSidebarWidthChange: { sidebarWidth = Double($0) })
         }
-        .onPreferenceChange(SidebarWidthPreferenceKey.self, perform: scheduleSidebarWidthSave)
+        .background(WindowCloseGuard(onCloseRequest: requestWindowClose))
         .background {
             EPUBArrowKeyMonitor(isEnabled: epubDocument != nil && focusedWorkspaceArea == .epub
                                 && (isEPUBNotebook || displayMode == .read)) { offset in
@@ -547,6 +774,19 @@ struct ReaderView: View {
             .frame(width: 0, height: 0)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: displayMode) { _, mode in
+            guard selectedFile != nil,
+                  (officeDocumentURL == nil && pdfDocument == nil && epubDocument == nil && webBrowser.currentURL == nil
+                   || epubNotebookLayout == .notes) else { return }
+            activateWorkspaceArea(mode == .edit ? .markdownEditor : .markdownReader)
+        }
+        .overlay {
+            if isConvertingKindle {
+                ProgressView("正在转换电子书为 EPUB…")
+                    .padding(20)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
         .coordinateSpace(name: "mainWindow")
         .preferredColorScheme(.light)
         .sheet(item: $activeSheet, onDismiss: {
@@ -557,14 +797,7 @@ struct ReaderView: View {
         }) {
             switch $0 {
             case .settings:
-                SettingsView(readerWidth: $readerWidth, bodyColorHex: $bodyColorHex, readerBackgroundHex: $readerBackgroundHex,
-                             strongColorHex: $strongColorHex, strongSize: $strongSize, strongFamily: $strongFamily,
-                             headingStylesData: $headingStylesData, bodySize: $bodySize, bodyFamily: $bodyFamily,
-                             lineHeight: $lineHeight, paragraphSpacing: $paragraphSpacing,
-                             outlineColorsData: $outlineColorsData, annotationFontSize: $annotationFontSize,
-                             annotationFontFamily: $annotationFontFamily, annotationTextColorHex: $annotationTextColorHex,
-                             readingDataLocation: readingLibrary.locationDescription,
-                             onDone: { activeSheet = nil })
+                overallSettingsView
             case .tableInsertion:
                 TableInsertionSheet { cells, formatted in insertTable(cells: cells, formatted: formatted) }
             case .webAddress:
@@ -591,7 +824,7 @@ struct ReaderView: View {
         }
         .alert("文档有未保存的修改", isPresented: $showUnsavedAlert) {
             Button("保存") {
-                if saveDocument() {
+                if savePendingDocumentOperation() {
                     continuePendingDocumentOperation()
                 } else {
                     cancelPendingTermination()
@@ -602,43 +835,75 @@ struct ReaderView: View {
         } message: {
             Text("继续此操作前，要先保存当前修改吗？")
         }
-        .alert("保存失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+        .alert("操作失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
             Button("好", role: .cancel) { saveError = nil }
         } message: { Text(saveError ?? "") }
-        .confirmationDialog("打开 EPUB 的方式", isPresented: $showEPUBModeChoice, titleVisibility: .visible) {
-            Button("编辑 EPUB 原文") { openEPUBOriginal() }
-            Button("写配套 Markdown 笔记") { openEPUBNote() }
-            Button("取消", role: .cancel) { pendingEPUBURL = nil }
+        .alert("需要安装 calibre", isPresented: $showCalibreInstallAlert) {
+            Button("下载 calibre") {
+                NSWorkspace.shared.open(URL(string: "https://calibre-ebook.com/download_osx")!)
+            }
+            Button("取消", role: .cancel) {}
         } message: {
-            Text("原文编辑会另存为新的 EPUB；笔记会与原书同名保存为 .md 文件。")
+            Text("MOBI、AZW 和 AZW3 需先转换为 EPUB。安装 calibre 后重新打开文件；原书不会被修改。")
+        }
+        .confirmationDialog("打开电子书的方式", isPresented: $showEPUBModeChoice, titleVisibility: .visible) {
+            Button("阅读原文") { openEPUBOriginal(editable: false) }
+            Button("编辑并另存 EPUB") { openEPUBOriginal(editable: true) }
+            Button("写配套 Markdown 笔记") { openEPUBNote() }
+            Button("取消", role: .cancel) { pendingEPUBURL = nil; pendingConvertedEPUBURL = nil }
+        } message: {
+            Text(pendingConvertedEPUBURL == nil
+                 ? "原文编辑会另存为新的 EPUB；笔记会与原书同名保存为 .md 文件。"
+                 : "已转换为 EPUB 并检查章节，原书未修改。编辑后只能另存 EPUB；笔记与原书同名保存为 .md 文件。")
         }
         .alert("PDF 需要密码", isPresented: $showPDFPasswordPrompt) {
             SecureField("输入密码", text: $pdfPassword)
-            Button("取消", role: .cancel) { pendingPDFURL = nil; pdfPassword = "" }
+            Button("取消", role: .cancel) { pendingPDFURL = nil; pendingRecentWorkspace = nil; pdfPassword = "" }
             Button("解锁") { unlockPendingPDF() }
         } message: {
             Text("此 PDF 受密码保护。")
         }
         .onAppear {
+            migrateDefaultHeadingColors()
+            migrateSystemFontDefaults()
             readerWidthInput = "\(Int(readerWidth))"
             epubReaderWidthInput = "\(Int(epubReaderWidth))"
+            // Preserve the existing appearance as the starting point, then let
+            // the three view scopes evolve independently.
+            if previewStyleData.isEmpty || (try? JSONDecoder().decode(MarkdownDisplayStyle.self, from: previewStyleData)) == nil {
+                let previousPreview = ["local.markdownreader.visual.v0728", "local.markdownreader.visual.v0727"]
+                    .compactMap { UserDefaults(suiteName: $0)?.data(forKey: "markdown.previewStyle.v1") }
+                    .first { (try? JSONDecoder().decode(MarkdownDisplayStyle.self, from: $0)) != nil }
+                if let previousPreview {
+                    previewStyleData = previousPreview
+                } else {
+                    previewStyleData = (try? JSONEncoder().encode(readingMarkdownStyle)) ?? Data()
+                }
+            }
+            if !previewTypographyDefaultsApplied,
+               var preview = try? JSONDecoder().decode(MarkdownDisplayStyle.self, from: previewStyleData) {
+                preview.applyPreviewTypographyDefaults()
+                previewStyleData = (try? JSONEncoder().encode(preview)) ?? previewStyleData
+                previewTypographyDefaultsApplied = true
+            }
+            if sourceStyleData.isEmpty || (try? JSONDecoder().decode(MarkdownDisplayStyle.self, from: sourceStyleData)) == nil {
+                sourceStyleData = (try? JSONEncoder().encode(initialSourceStyle)) ?? Data()
+            }
+            previewWidthInput = "\(Int(previewStyle.readerWidth))"
+            sourceWidthInput = "\(Int(sourceStyle.readerWidth))"
+            officeZoomInput = "\(Int(officeZoomPercent))"
             pdfZoomInput = "\(Int(pdfZoomPercent))"
             ReaderActions.reopenWindowHandler = { openWindow(id: "main") }
             ReaderActions.terminationHandler = {
-                if isDirty {
-                    pendingDocumentOperation = .terminate
-                    showUnsavedAlert = true
-                    return .terminateLater
-                }
-                if activeBookURL != nil && currentBookID == nil {
-                    Task { @MainActor in
-                        await flushCurrentReadingProfileAsync()
-                        NSApp.reply(toApplicationShouldTerminate: true)
+                MarkdownVisualCommandHub.commitActiveEdits {
+                    if isDirty {
+                        pendingDocumentOperation = .terminate
+                        showUnsavedAlert = true
+                    } else {
+                        awaitReadingProfileBeforeTermination()
                     }
-                    return .terminateLater
                 }
-                flushCurrentReadingProfile()
-                return .terminateNow
+                return .terminateLater
             }
             ReaderActions.openFileHandler = chooseFile
             ReaderActions.openFolderHandler = chooseFolder
@@ -647,23 +912,30 @@ struct ReaderView: View {
             ReaderActions.clipWebSelectionHandler = clipWebSelection
             ReaderActions.webBackHandler = { webBrowser.goBack() }
             ReaderActions.webForwardHandler = { webBrowser.goForward() }
-            ReaderActions.openSettingsHandler = { activeSheet = .settings }
-            ReaderActions.adjustBodySizeHandler = { bodySize = min(24, max(12, bodySize + $0)) }
-            ReaderActions.resetBodySizeHandler = { bodySize = 15 }
+            ReaderActions.openSettingsHandler = { openOverallSettings() }
+            ReaderActions.adjustBodySizeHandler = { activeBodySizeBinding.wrappedValue = min(24, max(12, activeBodySizeBinding.wrappedValue + $0)) }
+            ReaderActions.resetBodySizeHandler = { activeBodySizeBinding.wrappedValue = 15 }
             ReaderActions.adjustTypographySizeHandler = { amount in
                 switch fontSizeTarget {
-                case .body: bodySize = min(24, max(12, bodySize + amount))
-                case .outline: outlineFontScale = min(1.6, max(0.75, outlineFontScale + amount * 0.1))
-                case .pdf: pdfZoomPercent = min(300, max(25, pdfZoomPercent + amount * 10))
+                case .body: activeBodySizeBinding.wrappedValue = min(24, max(12, activeBodySizeBinding.wrappedValue + amount))
+                case .outline:
+                    if selectedFile != nil && sidebarOutlineTab == .markdown {
+                        markdownOutlineScaleBinding.wrappedValue = min(1.6, max(0.75, markdownOutlineScaleBinding.wrappedValue + amount * 0.1))
+                    } else { outlineFontScale = min(1.6, max(0.75, outlineFontScale + amount * 0.1)) }
+                case .pdf: pdfZoomPercent = min(1000, max(25, pdfZoomPercent + amount * 10))
                 case .web: webZoomPercent = min(200, max(50, webZoomPercent + amount * 10))
+                case .office: officeZoomPercent = min(500, max(25, officeZoomPercent + amount * 10))
                 }
             }
             ReaderActions.resetTypographySizeHandler = {
                 switch fontSizeTarget {
-                case .body: bodySize = 15
-                case .outline: outlineFontScale = 1
+                case .body: activeBodySizeBinding.wrappedValue = 15
+                case .outline:
+                    if selectedFile != nil && sidebarOutlineTab == .markdown { markdownOutlineScaleBinding.wrappedValue = 1 }
+                    else { outlineFontScale = 1 }
                 case .pdf: pdfZoomPercent = 100
                 case .web: webZoomPercent = 100
+                case .office: officeZoomPercent = 100
                 }
             }
             ReaderActions.sidebarVisible = showSidebar
@@ -671,7 +943,23 @@ struct ReaderView: View {
                 showSidebar.toggle()
                 ReaderActions.sidebarVisible = showSidebar
             }
-            ReaderActions.setDisplayModeHandler = { displayMode = $0 }
+            ReaderActions.setDisplayModeHandler = { mode in
+                if (hasNotebookReadingSource), epubNotebookLayout == .stacked {
+                    switch mode {
+                    case .read: showVisualMarkdown()
+                    case .edit: showMarkdownSource()
+                    case .split: maximizedNotebookPane = nil
+                    }
+                } else if epubDocument != nil && !isEPUBNotebook {
+                    displayMode = mode
+                } else {
+                    switch mode {
+                    case .read: showVisualMarkdown()
+                    case .edit: showMarkdownSource()
+                    case .split: displayMode = .split
+                    }
+                }
+            }
             ReaderActions.applyHeadingLevelHandler = applyHeadingLevel
             ReaderActions.applyInlineSyntaxHandler = applyInlineSyntax
             ReaderActions.applyLinePrefixHandler = applyLinePrefix
@@ -679,16 +967,10 @@ struct ReaderView: View {
             ReaderActions.clearLinePrefixHandler = clearLinePrefix
             ReaderActions.insertTemplateHandler = insertTemplate
             ReaderActions.insertImageFileHandler = insertImageFile
-            ReaderActions.toggleEditPreviewHandler = {
-                if (isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil), epubNotebookLayout == .epub {
-                    epubNotebookLayout = .notes
-                    displayMode = .edit
-                } else {
-                    displayMode = displayMode == .read ? .edit : .read
-                }
-            }
+            ReaderActions.toggleEditPreviewHandler = toggleVisualMarkdownSource
+            ReaderActions.toggleReadingEditingFocusHandler = toggleReadingEditingFocus
             ReaderActions.toggleSplitModeHandler = {
-                if isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil {
+                if hasNotebookReadingSource {
                     epubNotebookLayout = epubNotebookLayout == .stacked ? .notes : .stacked
                 } else if epubDocument != nil {
                     displayMode = displayMode == .edit ? .read : .edit
@@ -697,8 +979,8 @@ struct ReaderView: View {
                 }
             }
             ReaderActions.openPreviewToSideHandler = {
-                if isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil {
-                    if epubNotebookLayout == .epub { epubNotebookLayout = .stacked }
+                if hasNotebookReadingSource {
+                    if epubNotebookLayout == .epub { epubNotebookLayout = usesSwitchDisplay ? .notes : .stacked; showsNotesTab = usesSwitchDisplay }
                     displayMode = .split
                 } else if epubDocument != nil {
                     displayMode = .edit
@@ -707,11 +989,11 @@ struct ReaderView: View {
                 }
             }
             ReaderActions.setEPUBNotebookLayoutHandler = {
-                guard isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil else { return }
+                guard hasNotebookReadingSource else { return }
                 epubNotebookLayout = $0
             }
             ReaderActions.maximizeEPUBNotebookPaneHandler = { pane in
-                guard isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil else { return }
+                guard hasNotebookReadingSource else { return }
                 epubNotebookLayout = .stacked
                 maximizedNotebookPane = pane
             }
@@ -725,16 +1007,16 @@ struct ReaderView: View {
                 guard epubDocument != nil else { return }
                 activeSheet = .epubAnnotationList
             }
-            ReaderActions.saveHandler = { _ = saveDocument() }
+            ReaderActions.saveHandler = { MarkdownVisualCommandHub.commitActiveEdits { _ = saveDocument() } }
             ReaderActions.closeFileHandler = closeFile
+            ReaderActions.closeReadingSourceHandler = closeReadingSource
+            ReaderActions.closeNoteHandler = closeNote
             ReaderActions.closeFolderHandler = closeFolder
             ReaderActions.insertHorizontalRuleHandler = insertHorizontalRule
             ReaderActions.insertTableHandler = {
-                guard selectedFile != nil, displayMode != .read else { return }
+                guard selectedFile != nil else { return }
                 activeSheet = .tableInsertion
             }
-            migrateDefaultHeadingColors()
-            migrateSystemFontDefaults()
             if !lastFolderPath.isEmpty {
                 let url = URL(fileURLWithPath: lastFolderPath)
                 if FileManager.default.fileExists(atPath: url.path) { loadFolder(url) }
@@ -742,6 +1024,7 @@ struct ReaderView: View {
             reloadWebBookmarks(reportError: true)
             ReaderActions.setOpenDocumentHandler(open)
         }
+        .onDisappear { kindleConversionTask?.cancel() }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(20))
@@ -753,8 +1036,11 @@ struct ReaderView: View {
             scheduleParse(for: newSource)
         }
         .onChange(of: readerWidth) { _, value in readerWidthInput = "\(Int(value))" }
+        .onChange(of: previewStyleData) { _, _ in previewWidthInput = "\(Int(previewStyle.readerWidth))" }
+        .onChange(of: sourceStyleData) { _, _ in sourceWidthInput = "\(Int(sourceStyle.readerWidth))" }
         .onChange(of: epubReaderWidth) { _, value in epubReaderWidthInput = "\(Int(value))" }
         .onChange(of: pdfZoomPercent) { _, value in pdfZoomInput = "\(Int(value))" }
+        .onChange(of: officeZoomPercent) { _, value in officeZoomInput = "\(Int(value))" }
         .onChange(of: webZoomPercent) { _, value in webZoomInput = "\(Int(value))" }
         .onChange(of: pdfCurrentPage) { _, value in pdfPageInput = "\(value + 1)" }
         .onChange(of: readingStyleSettings) { _, style in persistReadingProfile(style: style) }
@@ -769,7 +1055,108 @@ struct ReaderView: View {
         }
         .onChange(of: epubNotebookLayout) { _, layout in
             if layout != .stacked { maximizedNotebookPane = nil }
+            if usesSwitchDisplay {
+                if layout == .stacked { usesSwitchDisplay = false }
+                else { showsNotesTab = layout == .notes }
+            }
         }
+    }
+
+    private func settingsView(for scope: WorkspaceStyleScope) -> some View {
+        SettingsView(scopeTitle: scope.title, isReadingScope: scope == .reading,
+                     isSourceScope: scope == .source,
+                     readerWidth: styleBinding(for: scope, keyPath: \.readerWidth, reading: $readerWidth),
+                     bodyColorHex: styleBinding(for: scope, keyPath: \.bodyColorHex, reading: $bodyColorHex),
+                     readerBackgroundHex: styleBinding(for: scope, keyPath: \.backgroundHex, reading: $readerBackgroundHex),
+                     strongColorHex: styleBinding(for: scope, keyPath: \.strongColorHex, reading: $strongColorHex),
+                     strongSize: styleBinding(for: scope, keyPath: \.strongSize, reading: $strongSize),
+                     strongFamily: styleBinding(for: scope, keyPath: \.strongFamily, reading: $strongFamily),
+                     headingStylesData: styleBinding(for: scope, keyPath: \.headingStylesData, reading: $headingStylesData),
+                     bodySize: styleBinding(for: scope, keyPath: \.bodySize, reading: $bodySize),
+                     bodyFamily: styleBinding(for: scope, keyPath: \.bodyFamily, reading: $bodyFamily),
+                     lineHeight: styleBinding(for: scope, keyPath: \.lineHeight, reading: $lineHeight),
+                     paragraphSpacing: styleBinding(for: scope, keyPath: \.paragraphSpacing, reading: $paragraphSpacing),
+                     outlineColorsData: styleBinding(for: scope, keyPath: \.outlineColorsData, reading: $outlineColorsData),
+                     annotationFontSize: $annotationFontSize, annotationFontFamily: $annotationFontFamily,
+                     annotationTextColorHex: $annotationTextColorHex,
+                     readingDataLocation: readingLibrary.locationDescription,
+                     embedded: true,
+                     onDone: { activeSheet = nil })
+    }
+
+    private var overallSettingsView: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("整体设置").font(.system(size: 18, weight: .semibold))
+                Spacer()
+                Button("完成") { activeSheet = nil }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
+
+            Picker("设置范围", selection: $settingsScope) {
+                ForEach(WorkspaceStyleScope.allCases, id: \.self) { scope in
+                    Label(scope.shortTitle, systemImage: scope.symbol).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 22)
+            .help("分别设置阅读、Markdown 可视化和 Markdown 源码；三套设置互不覆盖")
+
+            settingsView(for: settingsScope)
+                .id(settingsScope.title)
+        }
+        .frame(width: 680, height: 820)
+    }
+
+    private func openOverallSettings() {
+        settingsScope = activeStyleScope
+        activeSheet = .settings
+    }
+
+    private var navigationRail: some View {
+        VStack(spacing: 8) {
+            ForEach(visibleSidebarTabs, id: \.self) { tab in
+                Button {
+                    sidebarOutlineTab = tab
+                    showSidebar = true
+                    ReaderActions.sidebarVisible = true
+                    activateWorkspaceArea(.outline)
+                } label: {
+                    Image(systemName: tab.symbol)
+                    .font(.system(size: 16, weight: .regular))
+                    .frame(width: 38, height: 38)
+                    .background(sidebarOutlineTab == tab && showSidebar ? Color.primary.opacity(0.08) : .clear,
+                                in: RoundedRectangle(cornerRadius: 9))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(tab.title)
+                .accessibilityLabel(tab.title)
+            }
+            Spacer()
+            Button(action: openOverallSettings) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 16, weight: .regular))
+                    .frame(width: 38, height: 38)
+                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 9))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("整体设置（⌘,）")
+            .accessibilityLabel("整体设置")
+        }
+        .padding(.top, 54)
+        .padding(.bottom, 12)
+        .frame(width: 50)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .trailing) { Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1) }
     }
 
     private var sidebar: some View {
@@ -781,54 +1168,18 @@ struct ReaderView: View {
                     .buttonStyle(.plain).help("打开文件夹").toolbarHint("打开文件夹")
                 Button(action: chooseFile) { Image(systemName: "doc.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
                     .buttonStyle(.plain).help("打开文件").toolbarHint("打开文件")
+                Button(action: closeSidebarSelection) {
+                    Image(systemName: "xmark.circle").frame(width: 28, height: 26).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canCloseSidebarSelection)
+                .help(sidebarCloseTitle)
+                .toolbarHint("\(sidebarCloseTitle)；未保存内容会先询问")
+                .accessibilityLabel(sidebarCloseTitle)
             }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
 
-            if !markdownFiles.isEmpty {
-                Button { showFolderContents.toggle() } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: showFolderContents ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .bold))
-                        Text(folderURL?.lastPathComponent ?? "文件夹").font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Text("\(markdownFiles.count)").font(.system(size: 11, design: .rounded)).foregroundStyle(.tertiary)
-                    }.contentShape(Rectangle())
-                }.buttonStyle(.plain).foregroundStyle(.secondary).padding(.horizontal, 18).padding(.vertical, 7)
-                if showFolderContents {
-                    ScrollView {
-                        VStack(spacing: 1) {
-                            ForEach(markdownFiles, id: \.path) { url in
-                                Button { open(url) } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "doc.text").font(.system(size: 12)).foregroundStyle(.secondary)
-                                        Text(relativePath(url)).lineLimit(1).truncationMode(.middle)
-                                            .font(.system(size: 12))
-                                        Spacer(minLength: 0)
-                                    }.padding(.horizontal, 18).padding(.vertical, 7)
-                                        .background(selectedFile == url ? Color.accentColor.opacity(0.11) : .clear)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                }.buttonStyle(.plain).foregroundStyle(selectedFile == url ? Color.accentColor : Color.primary.opacity(0.8))
-                                    .padding(.horizontal, 8)
-                            }
-                        }.padding(.bottom, 8)
-                    }.frame(maxHeight: 170)
-                }
-                Divider().padding(.horizontal, 14)
-            }
-
             HStack(spacing: 4) {
-                ForEach(visibleSidebarTabs, id: \.self) { tab in
-                    Button {
-                        sidebarOutlineTab = tab
-                        activateWorkspaceArea(.outline)
-                    } label: {
-                        Text(tab.title)
-                            .font(.system(size: 11, weight: sidebarOutlineTab == tab ? .medium : .regular))
-                            .foregroundStyle(sidebarOutlineTab == tab ? Color.primary : Color.secondary)
-                            .padding(.horizontal, 9).padding(.vertical, 5)
-                            .background(sidebarOutlineTab == tab ? Color.primary.opacity(0.07) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 5))
-                    }
-                    .buttonStyle(.plain)
-                }
+                Text(sidebarOutlineTab.title).font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 0)
                 if sidebarOutlineTab == .markdown && !headings.isEmpty {
                     Button { expandedHeadings = Set(headings.map(\.id)) } label: {
@@ -842,7 +1193,9 @@ struct ReaderView: View {
             .padding(.horizontal, 12).padding(.top, 13).padding(.bottom, 7)
 
             Group {
-                if sidebarOutlineTab == .webBookmarks {
+                if sidebarOutlineTab == .files {
+                    fileBrowser
+                } else if sidebarOutlineTab == .webBookmarks {
                     webBookmarkOutline
                 } else if sidebarOutlineTab == .reading {
                     readingOutline
@@ -856,22 +1209,114 @@ struct ReaderView: View {
             Spacer(minLength: 0)
             HStack(spacing: 7) {
                 Image(systemName: "text.alignleft").font(.system(size: 11))
-                Text(sidebarOutlineTab == .webBookmarks ? "网页收藏" : sidebarOutlineTab == .reading
+                Text(sidebarOutlineTab == .files ? (folderURL?.lastPathComponent ?? "文件浏览") : sidebarOutlineTab == .webBookmarks ? "网页收藏" : sidebarOutlineTab == .reading
                      ? (webBrowser.currentURL != nil ? "网页" : pdfDocument != nil ? "PDF" : epubDocument != nil ? "EPUB" : "阅读")
-                     : (displayMode == .read ? "预览" : displayMode == .edit ? "编辑器" : "编辑 + 预览"))
+                     : (displayMode == .read ? "可视化编辑" : displayMode == .edit ? "Markdown 源码" : "源码 + 可视化"))
                     .font(.system(size: 11))
                 Spacer()
             }.foregroundStyle(.tertiary).padding(.horizontal, 18).padding(.vertical, 14)
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
         .overlay { workspaceFocusRing(focusedWorkspaceArea == .outline) }
-        .shadow(color: focusedWorkspaceArea == .outline ? Color.accentColor.opacity(0.14) : .clear, radius: 5)
+        .shadow(color: focusedWorkspaceArea == .outline ? Color.gray.opacity(0.08) : .clear, radius: 5)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.outline) } }
     }
 
     @ViewBuilder
+    private var fileBrowser: some View {
+        VStack(alignment: .leading, spacing: 0) {
+        if !recentWorkspaces.isEmpty {
+            Text("最近使用")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 5)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(recentWorkspaces) { workspace in
+                        Button { openRecentWorkspace(workspace) } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: workspace.readingPath == nil ? "doc.text" : "books.vertical")
+                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(workspace.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                    Text(workspace.subtitle).font(.system(size: 10)).foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help([workspace.readingPath, workspace.notePath].compactMap { $0 }.joined(separator: "\n"))
+                        .padding(.horizontal, 8)
+                    }
+                }
+            }
+            .frame(maxHeight: folderURL == nil ? .infinity : 190)
+        }
+        if let folderURL {
+            if !recentWorkspaces.isEmpty { Divider().padding(.vertical, 8) }
+            Button { showFolderContents.toggle() } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: showFolderContents ? "chevron.down" : "chevron.right")
+                    Text(folderURL.lastPathComponent).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Text("\(markdownFiles.count)").foregroundStyle(.tertiary)
+                }
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 18).padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if showFolderContents {
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        ForEach(markdownFiles, id: \.path) { url in
+                            Button { open(url) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "doc.text").foregroundStyle(.secondary)
+                                    Text(relativePath(url)).lineLimit(1).truncationMode(.middle)
+                                    Spacer(minLength: 0)
+                                }
+                                .font(.system(size: 12))
+                                .padding(.horizontal, 18).padding(.vertical, 7)
+                                .background(selectedFile == url ? Color.accentColor.opacity(0.11) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 6))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8)
+                        }
+                    }
+                }
+            }
+            if markdownFiles.isEmpty {
+                Text("这个文件夹中没有 Markdown 文件")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary).padding(.horizontal, 18)
+            }
+        } else {
+            if recentWorkspaces.isEmpty {
+                Text("选择文件夹以浏览 Markdown 文件")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 18).padding(.top, 8)
+            }
+        }
+        }
+    }
+
+    @ViewBuilder
     private var readingOutline: some View {
-        if webBrowser.currentURL != nil {
+        if let officeDocumentURL {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(officeDocumentURL.lastPathComponent, systemImage: "doc.richtext")
+                Text("使用 macOS 原格式预览，只供阅读。")
+                    .foregroundStyle(.secondary)
+                Button("阅读原文") {
+                    if usesSwitchDisplay { switchWorkspaceTab(toNotes: false) }
+                    else { epubNotebookLayout = .epub; activateReadingArea() }
+                }
+            }.font(.system(size: 12)).padding(16)
+            Spacer()
+        } else if webBrowser.currentURL != nil {
             if webBrowser.headings.isEmpty {
                 Text("网页中的标题会显示在这里")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
@@ -1043,8 +1488,9 @@ struct ReaderView: View {
             List {
                 ForEach(topHeadings) { heading in
                     HeadingRow(heading: heading, allHeadings: headings, expanded: $expandedHeadings,
-                               styles: headingStyles, outlineColors: outlineColors,
-                               fontScale: outlineFontScale, onSelect: jumpTo)
+                               styles: (try? JSONDecoder().decode([HeadingStyle].self, from: previewStyle.headingStylesData)) ?? HeadingStyle.defaults,
+                               outlineColors: (try? JSONDecoder().decode([String].self, from: previewStyle.outlineColorsData)) ?? Array(repeating: "#222222", count: 6),
+                               fontScale: previewStyle.outlineFontScale, onSelect: jumpTo)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 1, leading: 6, bottom: 1, trailing: 8))
                 }
@@ -1069,6 +1515,106 @@ struct ReaderView: View {
         .toolbarHint(hint)
     }
 
+    @ViewBuilder
+    private var workspaceModeControls: some View {
+        if hasNotebookReadingSource {
+            if !usesSwitchDisplay {
+                HStack(spacing: 1) {
+                    toolbarModeSegment(pdfDocument != nil ? "doc.text.image" : webBrowser.currentURL != nil ? "globe" : "book",
+                                       selected: epubNotebookLayout == .epub,
+                                       hint: "只看\(pdfDocument != nil ? "PDF" : webBrowser.currentURL != nil ? "网页" : "EPUB 原书") · ⌃⌘1") { epubNotebookLayout = .epub }
+                    toolbarModeSegment("doc.text", selected: epubNotebookLayout == .notes,
+                                       hint: "只看 Markdown 笔记 · ⌃⌘2") { epubNotebookLayout = .notes }
+                    toolbarModeSegment("rectangle.split.3x1", selected: epubNotebookLayout == .stacked,
+                                       hint: "阅读 + Markdown 笔记 · ⌃⌘3") { epubNotebookLayout = .stacked }
+                }
+                .padding(2)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                .frame(width: 86)
+                .help("切换阅读内容、Markdown 笔记或并排工作区")
+            }
+            if (officeDocumentURL != nil || pdfDocument != nil || webBrowser.currentURL != nil
+                || (epubDocument != nil && isEPUBNotebook)) && epubNotebookLayout == .stacked {
+                Picker("Markdown 工作区布局", selection: Binding(
+                    get: { pdfNotesLayout },
+                    set: { layout in
+                        epubNotebookLayout = .stacked
+                        switch layout {
+                        case .visual: showVisualMarkdown()
+                        case .source: showMarkdownSource()
+                        }
+                    }
+                )) {
+                    ForEach(PDFNotesLayout.allCases, id: \.self) { layout in
+                        Text(layout.title).tag(layout)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+                .fixedSize(horizontal: true, vertical: false)
+                .help("选择右侧显示可视化笔记或 Markdown 源码")
+                .accessibilityLabel("Markdown 工作区布局")
+            } else if epubNotebookLayout == .notes {
+                markdownModeSegments
+            }
+        } else if epubDocument != nil {
+            HStack(spacing: 1) {
+                toolbarModeSegment("eye", selected: displayMode == .read,
+                                   hint: "阅读 EPUB 原书 · ⌘R") { displayMode = .read }
+                toolbarModeSegment("pencil.line", selected: displayMode == .edit,
+                                   hint: "所见即所得编辑 EPUB · ⌘R") { displayMode = .edit }
+            }
+            .padding(2)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+            .frame(width: 58)
+            .help("阅读或编辑 EPUB 原文 · ⌘R")
+        } else {
+            markdownModeSegments
+        }
+    }
+
+    private var markdownModeSegments: some View {
+        HStack(spacing: 1) {
+            toolbarModeSegment("text.cursor", selected: displayMode == .read,
+                               hint: "所见即所得编辑 Markdown · ⇧⌘V") { showVisualMarkdown() }
+            toolbarModeSegment("pencil.line", selected: displayMode == .edit,
+                               hint: "Markdown 源码 · ⌘R") { showMarkdownSource() }
+            toolbarModeSegment("rectangle.split.2x1", selected: displayMode == .split,
+                               hint: "可视化与源码并排") { usesSwitchDisplay = false; displayMode = .split }
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+        .frame(width: 86)
+        .help("切换 Markdown 可视化、源码与分栏")
+    }
+
+    private var workspaceLayoutBar: some View {
+        HStack(spacing: 12) {
+            Button(usesSwitchDisplay ? "并排显示" : "切换显示") { toggleSwitchDisplay() }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("切换原文与笔记的并排布局或单区切换布局")
+                .toolbarHint(usesSwitchDisplay
+                             ? "并排显示阅读与笔记 · ⌃⌥L"
+                             : "切换显示阅读与笔记 · ⌃⌥L")
+            workspaceModeControls
+            if usesSwitchDisplay {
+                Picker("切换显示区域", selection: Binding(
+                    get: { hasReadingSource ? showsNotesTab : displayMode == .edit },
+                    set: { switchWorkspaceTab(toNotes: $0) }
+                )) {
+                    Text(hasReadingSource ? "阅读原文" : "可视化编辑").tag(false)
+                    Text(hasReadingSource ? "Markdown 笔记" : "Markdown 源码").tag(true)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 235)
+                    .help("切换当前显示的阅读或编辑区域 · ⇧⌘R")
+            }
+            Spacer(minLength: 0)
+            Text("切换阅读 / 编辑 · ⇧⌘R").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12).frame(height: 34)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
     private var toolbar: some View {
         HStack(spacing: 8) {
             Button {
@@ -1083,12 +1629,28 @@ struct ReaderView: View {
             .help(showSidebar ? "隐藏目录侧栏（⌘⌥1）" : "显示目录侧栏（⌘⌥1）")
             .toolbarHint(showSidebar ? "隐藏目录侧栏 · ⌘⌥1" : "显示目录侧栏 · ⌘⌥1")
             Text(webBrowser.currentURL != nil ? webBrowser.title :
-                 (pdfDocument?.documentURL?.deletingPathExtension().lastPathComponent
+                 (officeDocumentURL?.deletingPathExtension().lastPathComponent
+                  ?? pdfDocument?.documentURL?.deletingPathExtension().lastPathComponent
                   ?? selectedFile?.deletingPathExtension().lastPathComponent
                   ?? documentTitle))
                 .font(.system(size: 13, weight: .medium)).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let pdfDocument {
+            if let closeTitle = toolbarCloseTitle {
+                Button(action: closeToolbarDocument) {
+                    Image(systemName: "xmark.circle")
+                        .font(.system(size: 12))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .help(closeTitle == "关闭笔记" && source != savedSource
+                      ? "关闭 Markdown 笔记；先确认是否保存修改"
+                      : epubHasChanges && toolbarTargetsReading
+                      ? "关闭阅读文件；先确认是否保存修改"
+                      : "\(closeTitle)；未保存内容会先询问")
+                .toolbarHint("\(closeTitle)；未保存内容会先询问")
+                .accessibilityLabel(closeTitle)
+            }
+            if toolbarTargetsReading, let pdfDocument {
                 Button { navigatePDF(to: pdfCurrentPage - 1) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(.plain).disabled(pdfCurrentPage <= 0)
                     .help("上一页").toolbarHint("上一页 PDF · ←")
@@ -1103,7 +1665,7 @@ struct ReaderView: View {
                 Button { navigatePDF(to: pdfCurrentPage + 1) } label: { Image(systemName: "chevron.right") }
                     .buttonStyle(.plain).disabled(pdfCurrentPage + 1 >= pdfDocument.pageCount)
                     .help("下一页").toolbarHint("下一页 PDF · →")
-            } else if let epubDocument, !epubDocument.chapters.isEmpty {
+            } else if toolbarTargetsReading, let epubDocument, !epubDocument.chapters.isEmpty {
                 Button {
                     epubCurrentChapter = max(0, epubCurrentChapter - 1)
                     epubTargetFragment = nil
@@ -1146,12 +1708,43 @@ struct ReaderView: View {
                 .help("查看 EPUB 注释（⌥⌘M）")
                 .toolbarHint("查看、修改或删除注释 · ⌥⌘M")
             }
-            HStack(spacing: 6) {
+            if hasOpenWorkspace {
+                HStack(spacing: 6) {
                 if documentZoomControlIsActive {
                     Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
-                        .help(pdfZoomControlIsActive ? "PDF 缩放" : "网页缩放")
+                        .help(pdfZoomControlIsActive ? "PDF 缩放" : officeZoomControlIsActive ? "文档缩放" : "网页缩放")
                     if pdfZoomControlIsActive {
-                        Slider(value: $pdfZoomPercent, in: 25...300, step: 5)
+                        Button {
+                            requestPDFDisplayPreset(.fitWidth)
+                        } label: {
+                            Image(systemName: "arrow.left.and.right")
+                                .font(.system(size: 11))
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .help("适合页宽：按当前 PDF 阅读区重新计算")
+                        .toolbarHint("适合页宽 · 按当前阅读区重新计算")
+                        Button {
+                            requestPDFDisplayPreset(.fitHeight)
+                        } label: {
+                            Image(systemName: "arrow.up.and.down")
+                                .font(.system(size: 11))
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .help("适合页高：按当前 PDF 阅读区重新计算")
+                        .toolbarHint("适合页高 · 按当前阅读区重新计算")
+                        Button {
+                            requestPDFDisplayPreset(.best)
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 11))
+                                .frame(width: 22, height: 22)
+                        }
+                        .buttonStyle(.plain)
+                        .help("最佳显示：扫描页按原图像素计算；其他页面完整显示")
+                        .toolbarHint("最佳显示 · 扫描页原图像素 1:1；其他页面完整显示")
+                        Slider(value: pdfZoomSliderBinding, in: log(25)...log(1000))
                             .frame(width: 86).help("PDF 缩放：\(Int(pdfZoomPercent))%")
                             .toolbarHint("调整 PDF 页面缩放：\(Int(pdfZoomPercent))%")
                         TextField("100", text: $pdfZoomInput)
@@ -1160,6 +1753,15 @@ struct ReaderView: View {
                             .multilineTextAlignment(.trailing)
                             .onSubmit(commitPDFZoomInput)
                             .help("输入 PDF 缩放百分比并按回车")
+                    } else if officeZoomControlIsActive {
+                        Slider(value: $officeZoomPercent, in: 25...500, step: 5)
+                            .frame(width: 86).help("文档缩放：\(Int(officeZoomPercent))%")
+                        TextField("100", text: $officeZoomInput)
+                            .frame(width: 42).textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11, design: .monospaced))
+                            .multilineTextAlignment(.trailing)
+                            .onSubmit(commitOfficeZoomInput)
+                            .help("输入文档缩放百分比并按回车，范围 25–500%")
                     } else {
                         Slider(value: $webZoomPercent, in: 50...200, step: 5)
                             .frame(width: 86).help("网页缩放：\(Int(webZoomPercent))%")
@@ -1174,115 +1776,68 @@ struct ReaderView: View {
                     Text("%").font(.system(size: 11)).foregroundStyle(.secondary)
                 } else {
                     Image(systemName: "arrow.left.and.right").font(.system(size: 11)).foregroundStyle(.secondary)
-                        .help(epubWidthControlIsActive ? "调整 EPUB 原书排版宽度" : "调整 Markdown 正文排版宽度")
+                        .help(epubWidthControlIsActive ? "调整 EPUB 原书排版宽度" : activeStyleScope == .source ? "调整 Markdown 源码编辑宽度" : "调整 Markdown 预览宽度")
                     Slider(value: activeContentWidthBinding, in: 520...1040, step: 20)
                         .frame(width: 86).help("排版宽度：\(Int(activeContentWidth)) 像素")
-                        .toolbarHint(epubWidthControlIsActive ? "调整 EPUB 原书排版宽度" : "调整 Markdown 正文排版宽度")
+                        .toolbarHint(epubWidthControlIsActive ? "调整 EPUB 原书排版宽度" : activeStyleScope == .source ? "调整 Markdown 源码编辑宽度" : "调整 Markdown 预览宽度")
                     TextField("720", text: activeContentWidthInput)
                         .frame(width: 46).textFieldStyle(.roundedBorder)
                         .font(.system(size: 11, design: .monospaced))
                         .multilineTextAlignment(.trailing)
                         .onSubmit(commitActiveContentWidthInput)
-                        .help(epubWidthControlIsActive ? "输入 EPUB 排版宽度（像素）并按回车" : "输入 Markdown 正文排版宽度（像素）并按回车")
+                        .help(epubWidthControlIsActive ? "输入 EPUB 排版宽度（像素）并按回车" : activeStyleScope == .source ? "输入 Markdown 源码编辑宽度（像素）并按回车" : "输入 Markdown 预览宽度（像素）并按回车")
                     Text("px").font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Button {
                     if pdfZoomControlIsActive { pdfZoomPercent = max(25, pdfZoomPercent - 10) }
                     else if webZoomControlIsActive { webZoomPercent = max(50, webZoomPercent - 10) }
+                    else if officeZoomControlIsActive { officeZoomPercent = max(25, officeZoomPercent - 10) }
                     else { ReaderActions.adjustTypographySize(-1) }
                 } label: {
                     Text(documentZoomControlIsActive ? "−" : "A−").font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help(documentZoomControlIsActive ? "缩小\(pdfZoomControlIsActive ? "PDF" : "网页")（⌘−）" : "缩小当前区域字体（⌘−）")
-                .toolbarHint(documentZoomControlIsActive ? "缩小\(pdfZoomControlIsActive ? "PDF" : "网页") · ⌘−" : "缩小当前区域字体 · ⌘−")
+                .help(documentZoomControlIsActive ? "缩小\(pdfZoomControlIsActive ? "PDF" : officeZoomControlIsActive ? "文档" : "网页")（⌘−）" : "缩小当前区域字体（⌘−）")
+                .toolbarHint(documentZoomControlIsActive ? "缩小\(pdfZoomControlIsActive ? "PDF" : officeZoomControlIsActive ? "文档" : "网页") · ⌘−" : "缩小当前区域字体 · ⌘−")
                 Button {
-                    if pdfZoomControlIsActive { pdfZoomPercent = min(300, pdfZoomPercent + 10) }
+                    if pdfZoomControlIsActive { pdfZoomPercent = min(1000, pdfZoomPercent + 10) }
                     else if webZoomControlIsActive { webZoomPercent = min(200, webZoomPercent + 10) }
+                    else if officeZoomControlIsActive { officeZoomPercent = min(500, officeZoomPercent + 10) }
                     else { ReaderActions.adjustTypographySize(1) }
                 } label: {
                     Text(documentZoomControlIsActive ? "+" : "A+").font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help(documentZoomControlIsActive ? "放大\(pdfZoomControlIsActive ? "PDF" : "网页")（⌘+）" : "放大当前区域字体（⌘+）")
-                .toolbarHint(documentZoomControlIsActive ? "放大\(pdfZoomControlIsActive ? "PDF" : "网页") · ⌘+" : "放大当前区域字体 · ⌘+")
-                Button { activeSheet = .settings } label: { Label("样式", systemImage: "textformat.size").font(.system(size: 12)) }
-                    .buttonStyle(.plain).help("字体与行距（⌘,）")
-                    .toolbarHint("字体、行距与注释文字样式 · ⌘,")
-                if isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil {
-                    HStack(spacing: 1) {
-                        toolbarModeSegment(pdfDocument != nil ? "doc.text.image" : webBrowser.currentURL != nil ? "globe" : "book",
-                                           selected: epubNotebookLayout == .epub,
-                                           hint: "只看\(pdfDocument != nil ? "PDF" : webBrowser.currentURL != nil ? "网页" : "EPUB 原书") · ⌃⌘1") { epubNotebookLayout = .epub }
-                        toolbarModeSegment("doc.text", selected: epubNotebookLayout == .notes,
-                                           hint: "只看 Markdown 笔记 · ⌃⌘2") { epubNotebookLayout = .notes }
-                        toolbarModeSegment("rectangle.split.3x1", selected: epubNotebookLayout == .stacked,
-                                           hint: "阅读 + 笔记预览 + 编辑 · ⌃⌘3") { epubNotebookLayout = .stacked }
+                .help(documentZoomControlIsActive ? "放大\(pdfZoomControlIsActive ? "PDF" : officeZoomControlIsActive ? "文档" : "网页")（⌘+）" : "放大当前区域字体（⌘+）")
+                .toolbarHint(documentZoomControlIsActive ? "放大\(pdfZoomControlIsActive ? "PDF" : officeZoomControlIsActive ? "文档" : "网页") · ⌘+" : "放大当前区域字体 · ⌘+")
+                Button { openOverallSettings() } label: { Label("样式", systemImage: "textformat.size").font(.system(size: 12)) }
+                    .disabled(focusedWorkspaceArea == .office)
+                    .buttonStyle(.plain).help("\(activeStyleScope.title)：字体与行距（⌘,）")
+                    .toolbarHint("\(activeStyleScope.title) · ⌘,")
+                if !toolbarTargetsReading, selectedFile != nil {
+                    if isShowingSourceOnly {
+                        Button("MD 预览") { returnToVisualMarkdown() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .help("返回 Markdown 可视化预览与编辑 · ⌘R")
+                            .toolbarHint("返回 MD 预览 · ⌘R")
                     }
-                    .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                    .frame(width: 86).help("切换阅读内容、笔记或三栏工作区")
-                    if (pdfDocument != nil || webBrowser.currentURL != nil || (epubDocument != nil && isEPUBNotebook)) && epubNotebookLayout == .stacked {
-                        Picker("Markdown 工作区布局", selection: Binding(
-                            get: { pdfNotesLayout },
-                            set: { layout in
-                                epubNotebookLayout = .stacked
-                                switch layout {
-                                case .split: maximizedNotebookPane = nil
-                                case .preview: maximizedNotebookPane = .rightPreview
-                                case .editor: maximizedNotebookPane = .rightEditor
-                                }
-                            }
-                        )) {
-                            ForEach(PDFNotesLayout.allCases, id: \.self) { layout in
-                                Text(layout.title).tag(layout)
-                            }
+                    syntaxToolbarMenu
+                    if isMarkdownSourceVisible {
+                        Menu("源码显示") {
+                            Toggle("语法着色", isOn: $sourceSyntaxHighlighting)
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 220)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .help("设置右侧 Markdown 工作区：上下分屏，或让预览/编辑占满右侧")
-                        .accessibilityLabel("Markdown 工作区布局")
+                        .font(.system(size: 11, weight: .medium))
+                        .help("关闭语法着色可减少长文档编辑时的排版开销")
                     }
-                    if epubNotebookLayout == .notes {
-                        HStack(spacing: 1) {
-                            toolbarModeSegment("eye", selected: displayMode == .read,
-                                               hint: "只看笔记预览 · ⇧⌘V") { displayMode = .read }
-                            toolbarModeSegment("pencil.line", selected: displayMode == .edit,
-                                               hint: "编辑 Markdown 笔记 · ⌘R") { displayMode = .edit }
-                            toolbarModeSegment("rectangle.split.2x1", selected: displayMode == .split,
-                                               hint: "笔记编辑与预览并排") { displayMode = .split }
-                        }
-                        .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                        .frame(width: 86).help("切换 Markdown 笔记的编辑与预览")
-                    }
-                } else if epubDocument != nil {
-                    HStack(spacing: 1) {
-                        toolbarModeSegment("eye", selected: displayMode == .read,
-                                           hint: "阅读 EPUB 原书 · ⌘R") { displayMode = .read }
-                        toolbarModeSegment("pencil.line", selected: displayMode == .edit,
-                                           hint: "所见即所得编辑 EPUB · ⌘R") { displayMode = .edit }
-                    }
-                    .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                    .frame(width: 58).help("阅读或编辑 EPUB 原文（⌘R 切换）")
-                } else {
-                    HStack(spacing: 1) {
-                        toolbarModeSegment("eye", selected: displayMode == .read,
-                                           hint: "只看 Markdown 预览 · ⇧⌘V") { displayMode = .read }
-                        toolbarModeSegment("pencil.line", selected: displayMode == .edit,
-                                           hint: "只看编辑器 · ⌘R") { displayMode = .edit }
-                        toolbarModeSegment("rectangle.split.2x1", selected: displayMode == .split,
-                                           hint: "编辑器与预览并排") { displayMode = .split }
-                    }
-                    .padding(2).background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                    .frame(width: 86).help("切换编辑器与 Markdown 预览")
                 }
-                if isDirty {
-                    Button("保存") { _ = saveDocument() }.buttonStyle(.plain)
+                if !toolbarTargetsReading, isDirty {
+                    Button("保存") { MarkdownVisualCommandHub.commitActiveEdits { _ = saveDocument() } }.buttonStyle(.plain)
                         .font(.system(size: 12, weight: .medium)).help("保存修改（⌘S）")
                         .toolbarHint("保存修改 · ⌘S")
                 }
-            }.fixedSize()
+                }.fixedSize()
+            }
         }
         .padding(.leading, 12)
         .padding(.trailing, 74)
@@ -1291,9 +1846,157 @@ struct ReaderView: View {
         .zIndex(10)
     }
 
+    private var syntaxToolbarMenu: some View {
+        Menu {
+            ForEach(1...6, id: \.self) { level in
+                Button("标题 \(level)  ⌘\(level)") { applyHeadingLevel(level) }
+            }
+            Button("段落") { clearLinePrefix() }
+            Divider()
+            Button("加粗  ⌘B") { applyInlineSyntax("**", "**") }
+            Button("斜体  ⌘I") { applyInlineSyntax("*", "*") }
+            Button("下划线  ⌘U") { applyInlineSyntax("<u>", "</u>") }
+            Button("删除线  ⇧⌘E") { applyInlineSyntax("~~", "~~") }
+            Button("链接  ⌃⌘L") { applyInlineSyntax("[", "](链接地址)") }
+            Button("行内代码  ⌘K") { applyInlineSyntax("`", "`") }
+            Divider()
+            Button("无序列表  ⌃U") { applyLinePrefix("- ") }
+            Button("有序列表  ⇧⌃O") { applyLinePrefix("1. ") }
+            Button("任务列表  ⇧⌘T") { applyLinePrefix("- [ ] ") }
+            Button("引用  ⇧⌘B") { applyLinePrefix("> ") }
+            Button("分隔线  ⌥⌘S") { insertHorizontalRule() }
+            Divider()
+            Button("插入图片文件…  ⌥⌘I") { insertImageFile() }
+            Button("插入表格…  ⌘T") { activeSheet = .tableInsertion }
+            Divider()
+            if isShowingSourceOnly {
+                Button("切换到可视化编辑") { showVisualMarkdown() }
+            } else {
+                Button("切换到 Markdown 源码") { showMarkdownSource() }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Text("语法")
+                Image(systemName: "chevron.down").font(.system(size: 9))
+            }
+            .font(.system(size: 11))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("选中文字后应用 Markdown 格式")
+        .toolbarHint("Markdown 语法菜单")
+    }
+
+    private var isVisualMarkdownFocused: Bool {
+        if usesSwitchDisplay && hasReadingSource && !showsNotesTab { return false }
+        guard !isShowingSourceOnly else { return false }
+        guard selectedFile != nil, let view = MarkdownVisualCommandHub.activeWebView else { return false }
+        if let responder = view.window?.firstResponder as? NSView,
+           responder === view || responder.isDescendant(of: view) { return true }
+        return focusedWorkspaceArea == .markdownReader || focusedWorkspaceArea == .markdownPreview
+    }
+
+    private var isMarkdownSourceVisible: Bool {
+        if usesSwitchDisplay && hasReadingSource && !showsNotesTab { return false }
+        let hasReadingDocument = hasNotebookReadingSource
+        return MarkdownEditingTarget.sourceIsVisible(hasReadingDocument: hasReadingDocument,
+            usesReadingSplit: epubNotebookLayout == .stacked,
+            sourceOnly: isShowingSourceOnly, displayMode: displayMode)
+    }
+
+    private var canEditMarkdownSource: Bool {
+        guard isMarkdownSourceVisible else { return false }
+        if isShowingSourceOnly { return true }
+        if NSApp.keyWindow?.firstResponder is MarkdownSourceTextView { return true }
+        return focusedWorkspaceArea == .markdownEditor
+    }
+
+    private var isShowingSourceOnly: Bool {
+        let hasReadingDocument = hasNotebookReadingSource
+        if hasReadingDocument && epubNotebookLayout == .stacked && !usesSwitchDisplay {
+            return maximizedNotebookPane == .rightEditor || maximizedNotebookPane == .editor
+        }
+        return displayMode == .edit
+    }
+
+    private func showVisualMarkdown() {
+        if let window = NSApp.keyWindow { _ = window.makeFirstResponder(nil) }
+        MarkdownSourcePositionHub.flushPendingChanges()
+        MarkdownSourcePositionHub.capture()
+        guard saveMarkdownBeforeModeSwitch() else { return }
+        visualRestoreRequest += 1
+        visualScrollState.activeMode = .visual
+        let hasReadingDocument = hasNotebookReadingSource
+        if hasReadingDocument && epubNotebookLayout == .stacked && !usesSwitchDisplay {
+            maximizedNotebookPane = maximizedNotebookPane == .editor ? .preview : .rightPreview
+            activateWorkspaceArea(.markdownPreview)
+        } else {
+            displayMode = .read
+            if usesSwitchDisplay && hasReadingSource { showsNotesTab = true; epubNotebookLayout = .notes }
+            activateWorkspaceArea(.markdownReader)
+        }
+    }
+
+    private func showMarkdownSource() {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            guard saveMarkdownBeforeModeSwitch() else { return }
+            enterMarkdownSourceMode()
+        }
+    }
+
+    private func saveMarkdownBeforeModeSwitch() -> Bool {
+        // Resigning the text view commits any marked IME composition before
+        // reading the binding and writing the Markdown document to disk.
+        if let window = NSApp.keyWindow { _ = window.makeFirstResponder(nil) }
+        MarkdownSourcePositionHub.flushPendingChanges()
+        guard source == savedSource || saveDocument() else { return false }
+        return true
+    }
+
+    private func enterMarkdownSourceMode() {
+        visualScrollState.activeMode = .source
+        if let selection = visualScrollState.selection {
+            editorSelection = selection
+        } else if let viewport = visualScrollState.viewport {
+            editorSelection = NSRange(location: viewport.sourceOffset, length: 0)
+        }
+        sourcePositionRestoreRequest += 1
+        editorFocusRequest += 1
+        let hasReadingDocument = hasNotebookReadingSource
+        if hasReadingDocument && epubNotebookLayout == .stacked && !usesSwitchDisplay {
+            maximizedNotebookPane = maximizedNotebookPane == .preview ? .editor : .rightEditor
+            activateWorkspaceArea(.markdownEditor)
+        } else {
+            displayMode = .edit
+            if usesSwitchDisplay && hasReadingSource { showsNotesTab = true; epubNotebookLayout = .notes }
+            activateWorkspaceArea(.markdownEditor)
+        }
+    }
+
+    private func toggleVisualMarkdownSource() {
+        let hasReadingDocument = hasNotebookReadingSource
+        if hasReadingDocument && epubNotebookLayout == .epub {
+            epubNotebookLayout = .notes
+            displayMode = .read
+        } else if isShowingSourceOnly {
+            showVisualMarkdown()
+        } else {
+            showMarkdownSource()
+        }
+    }
+
+    private func returnToVisualMarkdown() { showVisualMarkdown() }
+
+    @discardableResult
+    private func applyVisualCommand(_ name: String, value: String = "") -> Bool {
+        guard isVisualMarkdownFocused else { return false }
+        return MarkdownVisualCommandHub.perform(name, value: value)
+    }
+
     private func readingPane(backgroundHex: String? = nil,
                              focusArea: FocusedWorkspaceArea = .markdownReader) -> some View {
-        let paneBackgroundHex = backgroundHex ?? readerBackgroundHex
+        let appearance = previewStyle
+        let paneBackgroundHex = backgroundHex ?? appearance.backgroundHex
         return Group {
             if blocks.isEmpty && selectedFile == nil {
                 VStack(spacing: 14) {
@@ -1308,25 +2011,211 @@ struct ReaderView: View {
                     }.padding(.top, 4)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ReaderWebView(blocks: blocks, readerWidth: readerWidth, headingStyles: headingStyles,
-                              bodyColorHex: bodyColorHex, readerBackgroundHex: paneBackgroundHex,
-                              strongColorHex: strongColorHex, strongSize: strongSize, strongFamily: strongFamily,
-                              bodySize: bodySize, bodyFamily: bodyFamily, lineHeight: lineHeight,
-                              paragraphSpacing: paragraphSpacing,
-                              baseURL: selectedFile?.deletingLastPathComponent(), scrollTarget: scrollTarget,
-                              scrollRequest: scrollRequest, sourceLineTarget: synchronizedSourceLine,
-                              sourceLineRequest: sourceLineRequest, onSourceLineChange: synchronizeSourceLine,
-                              onActivate: { activateWorkspaceArea(focusArea) })
+                MarkdownVisualEditor(source: $source, blocks: blocks, parsedSource: parsedSource, readerWidth: appearance.readerWidth,
+                                     headingStyles: (try? JSONDecoder().decode([HeadingStyle].self, from: appearance.headingStylesData)) ?? HeadingStyle.defaults,
+                                     bodyColorHex: appearance.bodyColorHex,
+                                     readerBackgroundHex: paneBackgroundHex, strongColorHex: appearance.strongColorHex,
+                                     strongSize: appearance.strongSize, strongFamily: appearance.strongFamily,
+                                     bodySize: appearance.bodySize, bodyFamily: appearance.bodyFamily, lineHeight: appearance.lineHeight,
+                                     paragraphSpacing: appearance.paragraphSpacing,
+                                     baseURL: selectedFile?.deletingLastPathComponent(), scrollTarget: scrollTarget,
+                                     scrollRequest: scrollRequest,
+                                     sourceLineTarget: synchronizedSourceLine, sourceLineRequest: visualSourceLineRequest,
+                                     restoreRequest: visualRestoreRequest,
+                                     scrollState: visualScrollState, onSourceLineChange: synchronizeSourceLineFromVisual,
+                                     onActivate: { activateWorkspaceArea(focusArea) },
+                                     onImagePaste: importVisualClipboardImage)
             }
         }
         .background(Color(hex: paneBackgroundHex))
         .overlay { workspaceFocusRing(focusedWorkspaceArea == focusArea) }
-        .shadow(color: focusedWorkspaceArea == focusArea ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
+        .overlay(alignment: .trailing) {
+            if selectedFile != nil {
+                WorkspacePositionMarkers(markers: markdownPositionMarkers(visual: true)) { id in
+                    jumpTo(id)
+                    activateWorkspaceArea(focusArea)
+                }
+            }
+        }
+        .shadow(color: focusedWorkspaceArea == focusArea ? Color.gray.opacity(0.045) : .clear, radius: 2)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(focusArea) } }
+    }
+
+    @ViewBuilder
+    private var originalReadingPane: some View {
+        if let url = officeDocumentURL { officeReadingPane(url) }
+        else if let document = pdfDocument { pdfReaderPane(document) }
+        else if let url = webBrowser.currentURL { webReaderPane(url) }
+        else if let document = epubDocument, document.chapters.indices.contains(epubCurrentChapter) {
+            epubChapterPane(document, editable: false)
+        }
+    }
+
+    private func officeReadingPane(_ url: URL) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("\(url.pathExtension.uppercased()) · 只读预览").font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                Button(usesSwitchDisplay ? "笔记" : (maximizedNotebookPane == .epub || epubNotebookLayout == .epub ? "还原" : "满屏")) {
+                    if usesSwitchDisplay { switchWorkspaceTab(toNotes: true) }
+                    else if epubNotebookLayout == .epub { epubNotebookLayout = .stacked; maximizedNotebookPane = nil }
+                    else { cycleNotebookExpansion(for: .epub) }
+                }
+                .buttonStyle(.borderless)
+                .help(usesSwitchDisplay ? "切换到 Markdown 笔记 · ⇧⌘R" : "最大化或还原文档阅读区")
+                .toolbarHint(usesSwitchDisplay ? "切换到 Markdown 笔记 · ⇧⌘R" : "最大化或还原文档阅读区")
+            }.padding(.horizontal, 10).frame(height: 28)
+            OfficeDocumentReader(url: url, state: officePreviewState, zoomPercent: $officeZoomPercent,
+                                 onActivate: { activateWorkspaceArea(.office) })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .simultaneousGesture(TapGesture().onEnded { activateWorkspaceArea(.office) })
+        }
+        .overlay { workspaceFocusRing(focusedWorkspaceArea == .office) }
+    }
+
+    private func openOfficeDocument(_ url: URL) {
+        guard OfficeReadingFormat.supports(url), FileManager.default.isReadableFile(atPath: url.path) else {
+            saveError = "无法读取文档：\(url.lastPathComponent)"
+            return
+        }
+        clearReadingSource()
+        officePreviewState.reset(for: url)
+        officeDocumentURL = url
+        documentTitle = url.deletingPathExtension().lastPathComponent
+        epubNotebookLayout = usesSwitchDisplay ? .epub : .stacked
+        showsNotesTab = false
+        if displayMode == .split { displayMode = .read }
+        activateWorkspaceArea(.office)
+        recordRecentWorkspace()
+    }
+
+    private func toggleSwitchDisplay() {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            MarkdownSourcePositionHub.capture()
+            guard saveMarkdownBeforeModeSwitch() else { return }
+            if usesSwitchDisplay {
+                usesSwitchDisplay = false
+                if hasReadingSource { epubNotebookLayout = .stacked }
+                else { displayMode = .split }
+            } else {
+                if epubDocument != nil { isEPUBNotebook = true }
+                let notesFocused = [.markdownPreview, .markdownReader, .markdownEditor].contains(focusedWorkspaceArea)
+                if displayMode == .split { displayMode = focusedWorkspaceArea == .markdownEditor ? .edit : .read }
+                showsNotesTab = hasReadingSource && notesFocused
+                epubNotebookLayout = showsNotesTab ? .notes : .epub
+                maximizedNotebookPane = nil
+                usesSwitchDisplay = true
+            }
+        }
+    }
+
+    private func switchWorkspaceTab(toNotes: Bool) {
+        guard hasReadingSource else {
+            if toNotes { showMarkdownSource() } else { showVisualMarkdown() }
+            return
+        }
+        MarkdownVisualCommandHub.commitActiveEdits {
+            MarkdownSourcePositionHub.capture()
+            guard saveMarkdownBeforeModeSwitch() else { return }
+            showsNotesTab = toNotes
+            epubNotebookLayout = toNotes ? .notes : .epub
+            if toNotes {
+                if displayMode == .split { displayMode = .read }
+                activateWorkspaceArea(displayMode == .edit ? .markdownEditor : .markdownPreview)
+                DispatchQueue.main.async { focusMarkdownEditor() }
+            } else {
+                activateReadingArea()
+                DispatchQueue.main.async { focusReadingAfterLayout() }
+            }
+        }
+    }
+
+    private func activateReadingArea() {
+        if officeDocumentURL != nil { activateWorkspaceArea(.office) }
+        else if pdfDocument != nil { activateWorkspaceArea(.pdf) }
+        else if epubDocument != nil { activateWorkspaceArea(.epub) }
+        else if webBrowser.currentURL != nil { activateWorkspaceArea(.web) }
+    }
+
+    private func focusReadingAfterLayout(attempt: Int = 0) {
+        guard [.pdf, .epub, .web, .office].contains(focusedWorkspaceArea) else { return }
+        guard !WorkspaceKeyboardFocus.focusReading(), attempt < 20 else { return }
+        // A maximized pane recreates its native reader during the next layout.
+        // Do not try to focus the detached view from the preceding layout.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50)) {
+            focusReadingAfterLayout(attempt: attempt + 1)
+        }
+    }
+
+    private func focusMarkdownEditor() {
+        if isShowingSourceOnly {
+            if let view = MarkdownSourcePositionHub.coordinator?.textView { view.window?.makeFirstResponder(view) }
+            else { editorFocusRequest += 1 }
+            visualScrollState.activeMode = .source
+            activateWorkspaceArea(.markdownEditor)
+        } else {
+            MarkdownVisualCommandHub.focusActiveEditor()
+            visualScrollState.activeMode = .visual
+            activateWorkspaceArea(.markdownPreview)
+        }
+    }
+
+    private func toggleReadingEditingFocus() {
+        if usesSwitchDisplay {
+            switchWorkspaceTab(toNotes: hasReadingSource ? !showsNotesTab : displayMode != .edit)
+        } else if hasReadingSource {
+            let noteHasFocus = NSApp.keyWindow?.firstResponder is MarkdownSourceTextView
+                || WorkspaceKeyboardFocus.containsFirstResponder(MarkdownVisualCommandHub.activeWebView)
+            if WorkspaceKeyboardFocus.readingHasFocus
+                || (!noteHasFocus && [.pdf, .epub, .web, .office].contains(focusedWorkspaceArea)) {
+                if maximizedNotebookPane == .epub { maximizedNotebookPane = nil }
+                if epubNotebookLayout == .epub { epubNotebookLayout = .stacked }
+                DispatchQueue.main.async { focusMarkdownEditor() }
+            } else {
+                if maximizedNotebookPane == .preview || maximizedNotebookPane == .editor { maximizedNotebookPane = nil }
+                if epubNotebookLayout == .notes { epubNotebookLayout = .stacked }
+                activateReadingArea()
+                DispatchQueue.main.async { focusReadingAfterLayout() }
+            }
+        } else if displayMode == .split {
+            if focusedWorkspaceArea == .markdownEditor {
+                MarkdownVisualCommandHub.focusActiveEditor()
+                visualScrollState.activeMode = .visual
+                activateWorkspaceArea(.markdownPreview)
+            } else {
+                if let view = MarkdownSourcePositionHub.coordinator?.textView { view.window?.makeFirstResponder(view) }
+                visualScrollState.activeMode = .source
+                activateWorkspaceArea(.markdownEditor)
+            }
+        } else { toggleVisualMarkdownSource() }
     }
 
     private var documentPane: some View {
         Group {
+            if usesSwitchDisplay {
+                if hasReadingSource {
+                    RetainedWorkspaceTabs(showsNotes: showsNotesTab,
+                        reading: AnyView(originalReadingPane), notes: AnyView(markdownWorkspacePane))
+                } else {
+                    RetainedWorkspaceTabs(showsNotes: displayMode == .edit,
+                        reading: AnyView(readingPane()), notes: AnyView(editorPane))
+                }
+            } else {
+                parallelDocumentPane
+            }
+        }
+    }
+
+    private var parallelDocumentPane: some View {
+        Group {
+            if let officeDocumentURL {
+                switch epubNotebookLayout {
+                case .epub: officeReadingPane(officeDocumentURL)
+                case .notes: markdownWorkspacePane
+                case .stacked:
+                    officeNotebookWorkspace(officeDocumentURL)
+                }
+            } else
             if let webURL = webBrowser.currentURL {
                 switch epubNotebookLayout {
                 case .epub:
@@ -1375,12 +2264,14 @@ struct ReaderView: View {
                       readingPosition: $pdfReadingPosition,
                       documentID: pdfSourceURL?.standardizedFileURL.path ?? document.documentURL?.standardizedFileURL.path ?? "",
                       navigationRequest: pdfNavigationRequest,
+                      displayPresetRequest: pdfDisplayPresetRequest,
                       isReadingProfileLoading: pdfProfileLoading,
                       backgroundColor: Color(hex: readerBackgroundHex),
                       onActivate: { activateWorkspaceArea(.pdf) })
             .background(Color(hex: readerBackgroundHex))
             .overlay { workspaceFocusRing(focusedWorkspaceArea == .pdf) }
-            .shadow(color: focusedWorkspaceArea == .pdf ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
+            .overlay(alignment: .trailing) { pdfPositionMarkers(document) }
+            .shadow(color: focusedWorkspaceArea == .pdf ? Color.gray.opacity(0.045) : .clear, radius: 2)
             .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.pdf) } }
     }
 
@@ -1389,9 +2280,21 @@ struct ReaderView: View {
                        isBookmarked: webBookmarks.contains(where: { $0.urlString == url.absoluteString }),
                        onBookmark: beginBookmarkCurrentPage, onClip: appendWebClip,
                        onActivate: { activateWorkspaceArea(.web) })
-            .overlay { workspaceFocusRing(focusedWorkspaceArea == .web) }
-            .shadow(color: focusedWorkspaceArea == .web ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
+            .overlay { workspaceFocusRing(focusedWorkspaceArea == .web).padding(.top, 35) }
+            .shadow(color: focusedWorkspaceArea == .web ? Color.gray.opacity(0.045) : .clear, radius: 2)
             .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.web) } }
+    }
+
+    @ViewBuilder
+    private func officeNotebookWorkspace(_ url: URL) -> some View {
+        switch maximizedNotebookPane {
+        case .epub: officeReadingPane(url)
+        case .preview: notebookPreviewPane
+        case .editor: notebookEditorPane
+        case nil, .rightPreview, .rightEditor:
+            notebookSplitWorkspace(primary: { AnyView(officeReadingPane(url)) },
+                                   notes: { AnyView(pdfNotebookNotesPane) })
+        }
     }
 
     @ViewBuilder
@@ -1403,12 +2306,8 @@ struct ReaderView: View {
             notebookPreviewPane
         case .editor:
             notebookEditorPane
-        case .rightPreview:
-            notebookSplitWorkspace(primary: { webReaderPane(url) }, notes: { notebookPreviewPane })
-        case .rightEditor:
-            notebookSplitWorkspace(primary: { webReaderPane(url) }, notes: { notebookEditorPane })
-        case nil:
-            notebookSplitWorkspace(primary: { webReaderPane(url) }, notes: { notebookVerticalSplitPane })
+        case nil, .rightPreview, .rightEditor:
+            notebookSplitWorkspace(primary: { AnyView(webReaderPane(url)) }, notes: { AnyView(pdfNotebookNotesPane) })
         }
     }
 
@@ -1423,7 +2322,7 @@ struct ReaderView: View {
             notebookEditorPane
         case nil, .rightPreview, .rightEditor:
             // Keep the PDF view in this stable split while only the right notes pane changes.
-            notebookSplitWorkspace(primary: { notebookPDFPane(document) }, notes: { pdfNotebookNotesPane })
+            notebookSplitWorkspace(primary: { AnyView(notebookPDFPane(document)) }, notes: { AnyView(pdfNotebookNotesPane) })
         }
     }
 
@@ -1435,24 +2334,23 @@ struct ReaderView: View {
         case .rightEditor:
             notebookEditorPane
         default:
-            notebookVerticalSplitPane
+            notebookPreviewPane
         }
     }
 
-    private func notebookSplitWorkspace<Primary: View, Notes: View>(
-        @ViewBuilder primary: @escaping () -> Primary,
-        @ViewBuilder notes: @escaping () -> Notes
+    private func notebookSplitWorkspace(
+        primary: @escaping () -> AnyView,
+        notes: @escaping () -> AnyView
     ) -> some View {
         GeometryReader { geometry in
-            HSplitView {
-                primary()
-                notes()
-                    .frame(minWidth: 320, idealWidth: min(max(CGFloat(notebookRightPaneWidth), 320), max(320, geometry.size.width - 260)))
-                    .background(GeometryReader { proxy in
-                        Color.clear.preference(key: WorkspacePaneWidthPreferenceKey.self, value: proxy.size.width)
-                    })
-            }
-            .onPreferenceChange(WorkspacePaneWidthPreferenceKey.self, perform: scheduleWorkspaceWidthSave)
+            NotebookSplitView(
+                primary: primary(),
+                notes: notes(),
+                rightPaneWidth: CGFloat(notebookRightPaneWidth),
+                minimumPrimaryWidth: 260,
+                minimumNotesWidth: 320,
+                onRightPaneWidthChange: scheduleWorkspaceWidthSave
+            )
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
     }
@@ -1485,21 +2383,15 @@ struct ReaderView: View {
 
     @ViewBuilder
     private func epubNotebookWorkspace(_ document: EPUBPackageDocument) -> some View {
-        if let maximizedNotebookPane {
-            switch maximizedNotebookPane {
+        switch maximizedNotebookPane {
             case .epub:
                 notebookEPUBPane(document)
             case .preview:
                 notebookPreviewPane
             case .editor:
                 notebookEditorPane
-            case .rightPreview:
-                notebookSplitWorkspace(primary: { notebookEPUBPane(document) }, notes: { notebookPreviewPane })
-            case .rightEditor:
-                notebookSplitWorkspace(primary: { notebookEPUBPane(document) }, notes: { notebookEditorPane })
-            }
-        } else {
-            notebookSplitWorkspace(primary: { notebookEPUBPane(document) }, notes: { notebookVerticalSplitPane })
+            case nil, .rightPreview, .rightEditor:
+                notebookSplitWorkspace(primary: { AnyView(notebookEPUBPane(document)) }, notes: { AnyView(pdfNotebookNotesPane) })
         }
     }
 
@@ -1508,18 +2400,14 @@ struct ReaderView: View {
             notebookPaneHeader(.epub)
             epubChapterPane(document, editable: false)
         }
-        .overlay { workspaceFocusRing(focusedWorkspaceArea == .epub) }
-        .shadow(color: focusedWorkspaceArea == .epub ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.epub) } }
     }
 
     private var notebookPreviewPane: some View {
         VStack(spacing: 0) {
             notebookPaneHeader(.preview)
-            readingPane(backgroundHex: notebookPreviewBackgroundHex, focusArea: .markdownPreview)
+            readingPane(focusArea: .markdownPreview)
         }
-        .overlay { workspaceFocusRing(focusedWorkspaceArea == .markdownPreview) }
-        .shadow(color: focusedWorkspaceArea == .markdownPreview ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.markdownPreview) } }
     }
 
@@ -1528,8 +2416,6 @@ struct ReaderView: View {
             notebookPaneHeader(.editor)
             editorPane
         }
-        .overlay { workspaceFocusRing(focusedWorkspaceArea == .markdownEditor) }
-        .shadow(color: focusedWorkspaceArea == .markdownEditor ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.markdownEditor) } }
     }
 
@@ -1537,18 +2423,25 @@ struct ReaderView: View {
         HStack(spacing: 6) {
             Text(titleOverride ?? pane.title).font(.system(size: 11, weight: .medium))
             Spacer()
-            if !(pdfDocument != nil && (pane == .preview || pane == .editor)) {
-                Button {
-                    cycleNotebookExpansion(for: pane)
-                } label: {
+            Button {
+                cycleNotebookExpansion(for: pane)
+            } label: {
+                HStack(spacing: 4) {
                     Image(systemName: maximizedNotebookPane == pane ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 10))
-                        .frame(width: 22, height: 20)
+                        .font(.system(size: 11, weight: .medium))
+                    Text(notebookExpansionTitle(for: pane))
+                        .font(.system(size: 10, weight: .medium))
                 }
-                .buttonStyle(.plain)
-                .help(notebookExpansionHelp(for: pane))
-                .accessibilityLabel(notebookExpansionHelp(for: pane))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 7)
+                .frame(height: 21)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 5))
+                .overlay { RoundedRectangle(cornerRadius: 5).stroke(Color.primary.opacity(0.12)) }
             }
+            .buttonStyle(.plain)
+            .help(notebookExpansionHelp(for: pane))
+            .toolbarHint(notebookExpansionHelp(for: pane))
+            .accessibilityLabel(notebookExpansionHelp(for: pane))
         }
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
@@ -1558,22 +2451,37 @@ struct ReaderView: View {
     }
 
     private func cycleNotebookExpansion(for pane: EPUBNotebookPane) {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            MarkdownSourcePositionHub.capture()
+            guard saveMarkdownBeforeModeSwitch() else { return }
+            applyNotebookExpansion(for: pane)
+            switch pane {
+            case .epub: activateReadingArea()
+            case .preview, .rightPreview: activateWorkspaceArea(.markdownPreview)
+            case .editor, .rightEditor: activateWorkspaceArea(.markdownEditor)
+            }
+            visualRestoreRequest += 1
+            sourcePositionRestoreRequest += 1
+        }
+    }
+
+    private func applyNotebookExpansion(for pane: EPUBNotebookPane) {
         switch pane {
         case .epub:
             maximizedNotebookPane = maximizedNotebookPane == .epub ? nil : .epub
         case .preview:
             switch maximizedNotebookPane {
-            case nil: maximizedNotebookPane = .rightPreview
+            case nil: maximizedNotebookPane = .preview
             case .rightPreview: maximizedNotebookPane = .preview
             case .preview: maximizedNotebookPane = nil
-            default: maximizedNotebookPane = .rightPreview
+            default: maximizedNotebookPane = .preview
             }
         case .editor:
             switch maximizedNotebookPane {
-            case nil: maximizedNotebookPane = .rightEditor
+            case nil: maximizedNotebookPane = .editor
             case .rightEditor: maximizedNotebookPane = .editor
-            case .editor: maximizedNotebookPane = nil
-            default: maximizedNotebookPane = .rightEditor
+            case .editor: maximizedNotebookPane = .rightEditor
+            default: maximizedNotebookPane = .editor
             }
         case .rightPreview, .rightEditor:
             break
@@ -1585,14 +2493,22 @@ struct ReaderView: View {
         case (.epub, .epub): "恢复三栏布局"
         case (.epub, _) where pdfDocument != nil: "最大化 PDF 阅读区"
         case (.epub, _): "最大化 EPUB 原书"
-        case (.preview, .rightPreview): "将笔记预览最大化到整个工作区"
         case (.preview, .preview): "恢复三栏布局"
-        case (.preview, _): "让笔记预览占满右侧"
-        case (.editor, .rightEditor): "将笔记编辑最大化到整个工作区"
+        case (.preview, _): "将可视化笔记最大化到整个工作区"
         case (.editor, .editor): "恢复三栏布局"
-        case (.editor, _): "让笔记编辑占满右侧"
+        case (.editor, _): "将笔记编辑最大化到整个工作区"
         case (.rightPreview, _): "让笔记预览占满右侧"
         case (.rightEditor, _): "让笔记编辑占满右侧"
+        }
+    }
+
+    private func notebookExpansionTitle(for pane: EPUBNotebookPane) -> String {
+        switch (pane, maximizedNotebookPane) {
+        case (.epub, .epub), (.preview, .preview), (.editor, .editor): "还原"
+        case (.preview, .rightPreview), (.editor, .rightEditor): "满屏"
+        case (.epub, _): "满屏"
+        case (.preview, _), (.editor, _): "满屏"
+        case (.rightPreview, _), (.rightEditor, _): "占满右侧"
         }
     }
 
@@ -1604,10 +2520,9 @@ struct ReaderView: View {
             case .edit:
                 editorPane
             case .split:
-                HSplitView {
-                    editorPane.frame(minWidth: 260)
-                    readingPane().frame(minWidth: 300)
-                }
+                NotebookSplitView(primary: AnyView(readingPane()), notes: AnyView(editorPane),
+                    rightPaneWidth: CGFloat(markdownPreviewPaneWidth), minimumPrimaryWidth: 260,
+                    minimumNotesWidth: 300, onRightPaneWidthChange: { markdownPreviewPaneWidth = Double($0) })
             }
         }
     }
@@ -1653,7 +2568,8 @@ struct ReaderView: View {
         }
         .background(Color(hex: readerBackgroundHex))
         .overlay { workspaceFocusRing(focusedWorkspaceArea == .epub) }
-        .shadow(color: focusedWorkspaceArea == .epub ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
+        .overlay(alignment: .trailing) { epubPositionMarkers(document) }
+        .shadow(color: focusedWorkspaceArea == .epub ? Color.gray.opacity(0.045) : .clear, radius: 2)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.epub) } }
     }
 
@@ -1874,11 +2790,12 @@ struct ReaderView: View {
     }
 
     private var editorPane: some View {
-        VStack(spacing: 0) {
-            if !((isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil) && epubNotebookLayout == .stacked) {
+        let appearance = sourceStyle
+        return VStack(spacing: 0) {
+            if !((hasNotebookReadingSource) && epubNotebookLayout == .stacked) {
             HStack(spacing: 7) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right").font(.system(size: 11))
-                Text((isEPUBNotebook || pdfDocument != nil || webBrowser.currentURL != nil) ? "Markdown 笔记" : "Markdown 源码")
+                Text((hasNotebookReadingSource) ? "Markdown 笔记" : "Markdown 源码")
                     .font(.system(size: 11, weight: .medium))
                 Spacer()
                 if isDirty { Text("未保存").font(.system(size: 10)).foregroundStyle(.secondary) }
@@ -1886,18 +2803,27 @@ struct ReaderView: View {
             .foregroundStyle(.secondary).padding(.horizontal, 16).frame(height: 34)
             Divider()
             }
-            MarkdownSourceEditor(text: $source, selection: $editorSelection,
-                                 fontSize: CGFloat(max(13, bodySize)),
-                                 headingStyles: headingStyles,
-                                 bodyColorHex: bodyColorHex,
-                                 strongColorHex: strongColorHex,
+            MarkdownSourceEditor(text: $source,
+                                 selection: Binding(get: { editorSelectionStorage.range },
+                                                    set: { editorSelectionStorage.range = $0 }),
+                                 fontSize: CGFloat(max(12, appearance.bodySize)),
+                                 fontFamily: appearance.bodyFamily,
+                                 lineHeight: CGFloat(appearance.lineHeight),
+                                 paragraphSpacing: CGFloat(appearance.paragraphSpacing),
+                                 backgroundHex: appearance.backgroundHex,
+                                 headingStyles: (try? JSONDecoder().decode([HeadingStyle].self, from: appearance.headingStylesData)) ?? HeadingStyle.defaults,
+                                 bodyColorHex: appearance.bodyColorHex,
+                                 strongColorHex: appearance.strongColorHex,
+                                 syntaxHighlightingEnabled: sourceSyntaxHighlighting,
                                  sourceLineTarget: synchronizedSourceLine,
                                  sourceLineRequest: sourceLineRequest,
                                  focusRequest: editorFocusRequest,
-                                 onSourceLineChange: synchronizeSourceLine,
+                                 onSourceLineChange: synchronizeSourceLineFromSource,
                                  onActivate: { activateWorkspaceArea(.markdownEditor) },
-                                 onImagePaste: pasteImage)
-                .background(Color(nsColor: .textBackgroundColor))
+                                 onImagePaste: pasteImage,
+                                 positionState: visualScrollState,
+                                 positionRestoreRequest: sourcePositionRestoreRequest)
+                .background(Color(hex: appearance.backgroundHex))
                 .disabled(selectedFile == nil)
                 .overlay {
                     if selectedFile == nil {
@@ -1910,17 +2836,75 @@ struct ReaderView: View {
                     }
                 }
         }
-        .background(Color(nsColor: .textBackgroundColor))
-        .frame(maxWidth: readerWidth + 76)
+        .background(Color(hex: appearance.backgroundHex))
+        .frame(maxWidth: appearance.readerWidth + 76)
         .frame(maxWidth: .infinity)
-        .overlay { workspaceFocusRing(focusedWorkspaceArea == .markdownEditor) }
-        .shadow(color: focusedWorkspaceArea == .markdownEditor ? Color.accentColor.opacity(0.045) : .clear, radius: 2)
+        .overlay {
+            workspaceFocusRing(focusedWorkspaceArea == .markdownEditor)
+                .padding(.top, ((hasNotebookReadingSource)
+                                && epubNotebookLayout == .stacked) ? 0 : 35)
+        }
+        .overlay(alignment: .trailing) {
+            if selectedFile != nil {
+                WorkspacePositionMarkers(markers: markdownPositionMarkers(visual: false)) { id in
+                    jumpTo(id)
+                    activateWorkspaceArea(.markdownEditor)
+                }
+            }
+        }
+        .shadow(color: focusedWorkspaceArea == .markdownEditor ? Color.gray.opacity(0.045) : .clear, radius: 2)
         .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.markdownEditor) } }
     }
 
     private var isDirty: Bool { source != savedSource || epubHasChanges }
 
     private var topHeadings: [MarkdownBlock] { headings.filter { $0.parentID == nil } }
+
+    private func markdownPositionMarkers(visual: Bool) -> [WorkspacePositionMarker] {
+        guard !headings.isEmpty else { return [] }
+        let lineCount = max(1, source.reduce(1) { $1 == "\n" ? $0 + 1 : $0 })
+        let currentID = headings.last(where: { $0.sourceLine <= synchronizedSourceLine })?.id
+        return headings.compactMap { heading in
+            guard let index = blocks.firstIndex(where: { $0.id == heading.id }) else { return nil }
+            let fraction = visual ? Double(index) / Double(max(1, blocks.count - 1))
+                : Double(max(0, heading.sourceLine - 1)) / Double(max(1, lineCount - 1))
+            return WorkspacePositionMarker(id: heading.id, fraction: fraction,
+                                           title: heading.title ?? "标题", current: heading.id == currentID)
+        }
+    }
+
+    private func pdfPositionMarkers(_ document: PDFDocument) -> some View {
+        func flatten(_ items: [PDFBookmarkItem]) -> [PDFBookmarkItem] {
+            items.flatMap { [$0] + flatten($0.children ?? []) }
+        }
+        let items = flatten(document.markdownStudioBookmarks).filter { $0.pageIndex != nil }
+        let markers = items.map { item in
+            let page = item.pageIndex ?? 0
+            return WorkspacePositionMarker(id: String(page),
+                fraction: Double(page) / Double(max(1, document.pageCount - 1)),
+                title: "\(item.title) · 第 \(page + 1) 页", current: page == pdfCurrentPage)
+        }
+        return WorkspacePositionMarkers(markers: markers) { page in
+            if let value = Int(page) { navigatePDF(to: value); activateWorkspaceArea(.pdf) }
+        }
+    }
+
+    private func epubPositionMarkers(_ document: EPUBPackageDocument) -> some View {
+        var seen = Set<Int>()
+        let markers = document.tableOfContents.compactMap { item -> WorkspacePositionMarker? in
+            guard let target = document.navigationTarget(for: item), seen.insert(target.chapterIndex).inserted else { return nil }
+            return WorkspacePositionMarker(id: String(target.chapterIndex),
+                fraction: Double(target.chapterIndex) / Double(max(1, document.chapters.count - 1)),
+                title: item.title, current: target.chapterIndex == epubCurrentChapter)
+        }
+        return WorkspacePositionMarkers(markers: markers) { chapter in
+            guard let value = Int(chapter), document.chapters.indices.contains(value) else { return }
+            epubCurrentChapter = value
+            epubTargetFragment = nil
+            epubNavigationRequest += 1
+            activateWorkspaceArea(.epub)
+        }
+    }
 
     private func jumpTo(_ id: String) {
         activateWorkspaceArea(.outline)
@@ -1929,16 +2913,27 @@ struct ReaderView: View {
         if let heading = headings.first(where: { $0.id == id }) {
             synchronizedSourceLine = heading.sourceLine
             sourceLineRequest += 1
+            visualSourceLineRequest += 1
         }
     }
-    private func synchronizeSourceLine(_ line: Int) {
-        guard line > 0, abs(line - synchronizedSourceLine) > 1 else { return }
+    private func synchronizeSourceLineFromVisual(_ line: Int) {
+        guard line > 0, line != synchronizedSourceLine else { return }
         synchronizedSourceLine = line
         sourceLineRequest += 1
     }
 
+    private func synchronizeSourceLineFromSource(_ line: Int) {
+        guard line > 0, line != synchronizedSourceLine else { return }
+        synchronizedSourceLine = line
+        visualSourceLineRequest += 1
+    }
+
     private func insertTable(cells: [[String]], formatted: Bool) {
-        guard selectedFile != nil, displayMode != .read else { return }
+        if let data = try? JSONSerialization.data(withJSONObject: cells),
+           let json = String(data: data, encoding: .utf8),
+           applyVisualCommand("table", value: json) { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let table = MarkdownTableFormatter.markdown(cells, formatted: formatted)
         let original = source as NSString
         let location = min(editorSelection.location, original.length)
@@ -1954,6 +2949,7 @@ struct ReaderView: View {
         editorSelection = NSRange(location: firstCellOffset, length: (firstHeader as NSString).length)
         synchronizedSourceLine = (source as NSString).substring(to: firstCellOffset).components(separatedBy: "\n").count
         sourceLineRequest += 1
+        visualSourceLineRequest += 1
         focusEditorAfterTableInsert = true
     }
     private func migrateDefaultHeadingColors() {
@@ -1986,15 +2982,126 @@ struct ReaderView: View {
         guard let folderURL else { return url.lastPathComponent }
         return String(url.path.dropFirst(folderURL.path.count + 1))
     }
+
+    private var recentWorkspaces: [RecentWorkspace] {
+        RecentWorkspaceHistory.decode(recentWorkspacesData)
+    }
+
+    private func recordRecentWorkspace() {
+        guard !suppressRecentRecording else { return }
+        let workspace = RecentWorkspace(readingURL: activeReadingURL, noteURL: selectedFile)
+        guard workspace.readingPath != nil || workspace.notePath != nil else { return }
+        let updated = RecentWorkspaceHistory.record(workspace, in: recentWorkspaces)
+        if let data = try? JSONEncoder().encode(updated) { recentWorkspacesData = data }
+    }
+
+    private func openRecentWorkspace(_ workspace: RecentWorkspace) {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            for url in [workspace.readingURL, workspace.noteURL].compactMap({ $0 }) {
+                guard FileManager.default.fileExists(atPath: url.path) else {
+                    saveError = "最近使用的文件已不存在：\(url.lastPathComponent)"
+                    return
+                }
+            }
+            if let noteURL = workspace.noteURL {
+                do { _ = try documentStore.openDocument(at: noteURL) }
+                catch {
+                    saveError = "无法读取最近使用的笔记：\(noteURL.lastPathComponent)（\(error.localizedDescription)）"
+                    return
+                }
+            }
+            if isDirty {
+                pendingDocumentOperation = .openRecentWorkspace(workspace)
+                showUnsavedAlert = true
+            } else {
+                performOpenRecentWorkspace(workspace)
+            }
+        }
+    }
+
+    private func performOpenRecentWorkspace(_ workspace: RecentWorkspace) {
+        kindleConversionTask?.cancel()
+        kindleConversionTask = nil
+        kindleConversionRevision += 1
+        isConvertingKindle = false
+        pendingRecentWorkspace = nil
+        guard let readingURL = workspace.readingURL else {
+            suppressRecentRecording = true
+            clearReadingSource()
+            restoreRecentNote(workspace.noteURL)
+            suppressRecentRecording = false
+            recordRecentWorkspace()
+            return
+        }
+        if OfficeReadingFormat.supports(readingURL) {
+            suppressRecentRecording = true
+            openOfficeDocument(readingURL)
+            if officeDocumentURL?.standardizedFileURL == readingURL.standardizedFileURL {
+                restoreRecentNote(workspace.noteURL)
+            }
+            suppressRecentRecording = false
+            recordRecentWorkspace()
+            return
+        }
+        if KindleBookConverter.isSupported(readingURL) {
+            pendingRecentWorkspace = workspace
+            beginKindleConversion(readingURL)
+            return
+        }
+        if readingURL.pathExtension.lowercased() == "pdf" {
+            pendingRecentWorkspace = workspace
+            suppressRecentRecording = true
+            openPDF(readingURL)
+            suppressRecentRecording = false
+            if pendingPDFURL == nil {
+                if pdfSourceURL?.standardizedFileURL == readingURL.standardizedFileURL {
+                    finishPendingRecentWorkspace()
+                } else { pendingRecentWorkspace = nil }
+            }
+            return
+        }
+        if readingURL.pathExtension.lowercased() == "epub" || isUnpackedEPUBDirectory(readingURL) {
+            suppressRecentRecording = true
+            pendingEPUBURL = readingURL
+            pendingConvertedEPUBURL = nil
+            openEPUBOriginal(editable: false)
+            if epubDocument?.sourceURL.standardizedFileURL == readingURL.standardizedFileURL {
+                restoreRecentNote(workspace.noteURL)
+                suppressRecentRecording = false
+                recordRecentWorkspace()
+            } else {
+                suppressRecentRecording = false
+            }
+            return
+        }
+        saveError = "最近使用记录中的阅读文件格式不受支持：\(readingURL.lastPathComponent)"
+    }
+
+    private func finishPendingRecentWorkspace() {
+        guard let workspace = pendingRecentWorkspace else { return }
+        pendingRecentWorkspace = nil
+        guard activeReadingURL?.standardizedFileURL == workspace.readingURL?.standardizedFileURL else { return }
+        suppressRecentRecording = true
+        restoreRecentNote(workspace.noteURL)
+        suppressRecentRecording = false
+        recordRecentWorkspace()
+    }
+
+    private func restoreRecentNote(_ noteURL: URL?) {
+        guard let noteURL else { clearNoteDocument(); return }
+        loadDocument(noteURL, preservingEPUB: epubDocument != nil,
+                     preservingPDF: pdfDocument != nil, preservingWeb: webBrowser.currentURL != nil, preservingOffice: officeDocumentURL != nil)
+    }
+
     private func chooseFile() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.plainText, .init(filenameExtension: "md")!,
-                                     .init(filenameExtension: "epub")!, .pdf]
+        // The system Markdown type varies with installed apps. Filtering the
+        // panel by UTType can leave a visible .md row impossible to open.
+        // Validate the selected URL in performOpen instead.
+        panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = true
-        // Let an unpacked `.epub` package be selected as one book instead of
-        // making a double-click descend into its internal folder structure.
-        panel.treatsFilePackagesAsDirectories = true
+        panel.canChooseDirectories = false
+        panel.treatsFilePackagesAsDirectories = false
         if panel.runModal() == .OK, let url = panel.url { open(url) }
     }
     private func chooseFolder() {
@@ -2008,62 +3115,115 @@ struct ReaderView: View {
         }
     }
     private func loadFolder(_ url: URL) {
-        if isDirty {
-            pendingDocumentOperation = .openFolder(url)
-            showUnsavedAlert = true
-            return
-        }
         openFolderContents(url)
     }
     private func openFolderContents(_ url: URL) {
-        folderURL = url
-        lastFolderPath = url.path
-        markdownFiles = (try? documentStore.listMarkdownDocuments(in: url)) ?? []
-        if let first = markdownFiles.first {
-            open(first)
-        } else {
-            selectedFile = nil
-            source = ""
-            savedSource = ""
-            blocks = []
-            headings = []
-            documentTitle = "此文件夹中没有 Markdown 文件"
-        }
-    }
-    private func open(_ url: URL) {
-        if url == selectedFile { return }
-        guard !isDirty else {
-            pendingDocumentOperation = .open(url)
-            showUnsavedAlert = true
+        let files: [URL]
+        do {
+            files = try documentStore.listMarkdownDocuments(in: url)
+        } catch {
+            saveError = "无法读取文件夹：\(error.localizedDescription)"
             return
         }
-        performOpen(url)
+        folderURL = url
+        lastFolderPath = url.path
+        markdownFiles = files
+        sidebarOutlineTab = .files
+        showFolderContents = true
+    }
+    private func open(_ url: URL) {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            if url == selectedFile { return }
+            let replacesNote = !WebBrowserSession.isWebURL(url)
+                && !OfficeReadingFormat.supports(url)
+                && !["epub", "pdf", "mobi", "azw", "azw3"].contains(url.pathExtension.lowercased())
+                && !isUnpackedEPUBDirectory(url)
+            if (replacesNote && source != savedSource) || (!replacesNote && epubHasChanges) {
+                pendingDocumentOperation = .open(url)
+                showUnsavedAlert = true
+            } else {
+                performOpen(url)
+            }
+        }
     }
 
     private func performOpen(_ url: URL) {
+        kindleConversionTask?.cancel()
+        kindleConversionTask = nil
+        kindleConversionRevision += 1
+        isConvertingKindle = false
+        pendingRecentWorkspace = nil
         if WebBrowserSession.isWebURL(url) {
             openWeb(url)
             return
         }
-        if (url.pathExtension.lowercased() == "epub" || url.pathExtension.lowercased() == "pdf" || isUnpackedEPUBDirectory(url)),
+        if (url.pathExtension.lowercased() == "epub" || url.pathExtension.lowercased() == "pdf"
+            || KindleBookConverter.isSupported(url) || isUnpackedEPUBDirectory(url)),
            activeBookURL?.standardizedFileURL != url.standardizedFileURL {
             flushCurrentReadingProfile()
         }
-        if url.pathExtension.lowercased() == "epub" || isUnpackedEPUBDirectory(url) {
+        if OfficeReadingFormat.supports(url) {
+            openOfficeDocument(url)
+        } else if KindleBookConverter.isSupported(url) {
+            beginKindleConversion(url)
+        } else if url.pathExtension.lowercased() == "epub" || isUnpackedEPUBDirectory(url) {
             pendingEPUBURL = url
+            pendingConvertedEPUBURL = nil
             showEPUBModeChoice = true
         } else if url.pathExtension.lowercased() == "pdf" {
             openPDF(url)
+        } else if url.pathExtension.lowercased() == "wps" {
+            saveError = "暂不支持 WPS 专有的 .wps 格式。请使用 .doc 或 .docx 文件。"
+        } else if ["azw4", "kfx"].contains(url.pathExtension.lowercased()) {
+            saveError = KindleBookConversionError.unsupportedFormat.localizedDescription
         } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
             saveError = "所选文件夹不是已解压的 EPUB：找不到 META-INF/container.xml。"
         } else {
             // When a reading source is open, Markdown documents belong to its notes pane.
-            loadDocument(url, preservingEPUB: epubDocument != nil && isEPUBNotebook,
-                         preservingPDF: pdfDocument != nil, preservingWeb: webBrowser.currentURL != nil)
+            loadDocument(url, preservingEPUB: epubDocument != nil,
+                         preservingPDF: pdfDocument != nil, preservingWeb: webBrowser.currentURL != nil, preservingOffice: officeDocumentURL != nil)
+        }
+    }
+
+    private func beginKindleConversion(_ url: URL) {
+        let revision = kindleConversionRevision
+        isConvertingKindle = true
+        let conversion = Task.detached(priority: .userInitiated) {
+            try KindleBookConverter().convert(url)
+        }
+        kindleConversionTask = conversion
+        Task { @MainActor in
+            do {
+                let converted = try await conversion.value
+                guard revision == kindleConversionRevision else { return }
+                kindleConversionTask = nil
+                isConvertingKindle = false
+                pendingEPUBURL = url
+                pendingConvertedEPUBURL = converted
+                if pendingRecentWorkspace?.readingURL?.standardizedFileURL == url.standardizedFileURL {
+                    suppressRecentRecording = true
+                    openEPUBOriginal(editable: false)
+                    suppressRecentRecording = false
+                    finishPendingRecentWorkspace()
+                } else {
+                    showEPUBModeChoice = true
+                }
+            } catch {
+                guard revision == kindleConversionRevision else { return }
+                kindleConversionTask = nil
+                isConvertingKindle = false
+                pendingRecentWorkspace = nil
+                if case KindleBookConversionError.converterUnavailable = error {
+                    showCalibreInstallAlert = true
+                } else {
+                    saveError = error.localizedDescription
+                }
+            }
         }
     }
 
     private func openWeb(_ url: URL) {
+        officeDocumentURL = nil
         guard WebBrowserSession.isWebURL(url) else { return }
         if activeBookURL != nil { flushCurrentReadingProfile() }
         let keepBookmarksVisible = sidebarOutlineTab == .webBookmarks
@@ -2074,7 +3234,8 @@ struct ReaderView: View {
         isEPUBNotebook = false
         epubHasChanges = false
         maximizedNotebookPane = nil
-        epubNotebookLayout = .stacked
+        epubNotebookLayout = usesSwitchDisplay ? .epub : .stacked
+        showsNotesTab = false
         activateWorkspaceArea(.web)
         if keepBookmarksVisible { sidebarOutlineTab = .webBookmarks }
         webBrowser.open(url)
@@ -2086,29 +3247,29 @@ struct ReaderView: View {
         return FileManager.default.fileExists(atPath: url.appendingPathComponent("META-INF/container.xml").path)
     }
 
-    private func openEPUBOriginal() {
+    private func openEPUBOriginal(editable: Bool) {
         guard let url = pendingEPUBURL else { return }
+        let convertedURL = pendingConvertedEPUBURL
         pendingEPUBURL = nil
+        pendingConvertedEPUBURL = nil
         if activeBookURL?.standardizedFileURL != url.standardizedFileURL { flushCurrentReadingProfile() }
         do {
-            let document = try EPUBPackageDocument.open(url)
+            let document = try EPUBPackageDocument.open(url, bookURL: convertedURL)
+            officeDocumentURL = nil
             webBrowser.close()
             pdfDocument = nil
             pdfSourceURL = nil
             epubDocument = document
-            isEPUBNotebook = false
+            isEPUBNotebook = selectedFile != nil && !editable
+            if isEPUBNotebook || usesSwitchDisplay { epubNotebookLayout = usesSwitchDisplay ? .epub : .stacked; showsNotesTab = false }
             activateWorkspaceArea(.epub)
             maximizedNotebookPane = nil
             epubCurrentChapter = 0
             beginLoadingReadingProfile(for: url, sourceKind: .epub, title: document.title)
             epubHasChanges = false
-            selectedFile = nil
-            source = ""
-            savedSource = ""
-            blocks = []
-            headings = []
             documentTitle = epubDocument?.title ?? url.deletingPathExtension().lastPathComponent
-            displayMode = .edit
+            displayMode = editable ? .edit : .read
+            recordRecentWorkspace()
         } catch {
             saveError = error.localizedDescription
         }
@@ -2116,40 +3277,59 @@ struct ReaderView: View {
 
     private func openEPUBNote() {
         guard let url = pendingEPUBURL else { return }
+        let convertedURL = pendingConvertedEPUBURL
         pendingEPUBURL = nil
+        pendingConvertedEPUBURL = nil
+        MarkdownVisualCommandHub.commitActiveEdits {
+            let noteURL = url.deletingPathExtension().appendingPathExtension("md")
+            if selectedFile != noteURL && source != savedSource {
+                pendingDocumentOperation = .openEPUBNote(url, convertedURL)
+                showUnsavedAlert = true
+            } else {
+                performOpenEPUBNote(url, convertedURL: convertedURL)
+            }
+        }
+    }
+
+    private func performOpenEPUBNote(_ url: URL, convertedURL: URL?) {
         if activeBookURL?.standardizedFileURL != url.standardizedFileURL { flushCurrentReadingProfile() }
         let noteURL = url.deletingPathExtension().appendingPathExtension("md")
+        var createdNote = false
         do {
-            let document = try EPUBPackageDocument.open(url)
+            let document = try EPUBPackageDocument.open(url, bookURL: convertedURL)
+            officeDocumentURL = nil
+            if !FileManager.default.fileExists(atPath: noteURL.path) {
+                guard FileManager.default.createFile(atPath: noteURL.path, contents: Data()) else {
+                    saveError = "无法在 EPUB 所在文件夹中创建 Markdown 笔记。"
+                    return
+                }
+                createdNote = true
+            }
+            let note = try documentStore.openDocument(at: noteURL)
             webBrowser.close()
             pdfDocument = nil
             pdfSourceURL = nil
             epubDocument = document
+            isEPUBNotebook = true
+            activateWorkspaceArea(.markdownEditor)
+            epubNotebookLayout = .stacked
+            maximizedNotebookPane = nil
+            epubCurrentChapter = 0
+            beginLoadingReadingProfile(for: url, sourceKind: .epub, title: document.title)
+            loadOpenedMarkdown(note)
+            displayMode = .edit
         } catch {
+            if createdNote { try? FileManager.default.removeItem(at: noteURL) }
             saveError = error.localizedDescription
-            return
         }
-        if !FileManager.default.fileExists(atPath: noteURL.path) {
-            guard FileManager.default.createFile(atPath: noteURL.path, contents: Data()) else {
-                saveError = "无法在 EPUB 所在文件夹中创建 Markdown 笔记。"
-                return
-            }
-        }
-        isEPUBNotebook = true
-        activateWorkspaceArea(.markdownEditor)
-        epubNotebookLayout = .stacked
-        maximizedNotebookPane = nil
-        epubCurrentChapter = 0
-        beginLoadingReadingProfile(for: url, sourceKind: .epub, title: epubDocument?.title ?? url.lastPathComponent)
-        loadDocument(noteURL, preservingEPUB: true)
-        displayMode = .edit
     }
 
     private func loadDocument(_ url: URL, preservingEPUB: Bool = false, preservingPDF: Bool = false,
-                              preservingWeb: Bool = false) {
+                              preservingWeb: Bool = false, preservingOffice: Bool = false) {
         do {
             let document = try documentStore.openDocument(at: url)
-            if !preservingEPUB && !preservingPDF && !preservingWeb {
+            if !preservingEPUB && !preservingPDF && !preservingWeb && !preservingOffice {
+                officeDocumentURL = nil
                 clearReadingProfileSelection()
                 epubDocument = nil
                 pdfDocument = nil
@@ -2157,24 +3337,37 @@ struct ReaderView: View {
                 isEPUBNotebook = false
                 webBrowser.close()
             }
-            epubHasChanges = false
-            source = document.source
-            savedSource = document.source
-            selectedFile = url
-            documentTitle = document.title
-            scrollTarget = nil
-            synchronizedSourceLine = 1
-            sourceLineRequest += 1
-            blocks = MarkdownBlock.parse(source)
-            headings = blocks.filter { $0.headingLevel != nil }
-            expandedHeadings = Set(headings.filter { $0.parentID == nil }.map(\.id))
+            if preservingEPUB { isEPUBNotebook = true; if !usesSwitchDisplay { epubNotebookLayout = .stacked } }
+            loadOpenedMarkdown(document)
+            if usesSwitchDisplay && hasReadingSource {
+                showsNotesTab = true
+                epubNotebookLayout = .notes
+                displayMode = .read
+                activateWorkspaceArea(.markdownPreview)
+            }
         } catch {
-            documentTitle = "无法读取文件：\(url.lastPathComponent)"
-            selectedFile = nil
-            source = ""
-            savedSource = ""
-            blocks = []; headings = []
+            saveError = "无法读取文件：\(url.lastPathComponent)（\(error.localizedDescription)）"
         }
+    }
+
+    private func loadOpenedMarkdown(_ document: MarkdownDocument) {
+        source = document.source
+        savedSource = document.source
+        selectedFile = document.url
+        visualScrollState.reset(for: document.url)
+        if !hasReadingSource {
+            documentTitle = document.title
+            displayMode = usesSwitchDisplay ? .read : .split
+        }
+        scrollTarget = nil
+        synchronizedSourceLine = 1
+        sourceLineRequest += 1
+        visualSourceLineRequest += 1
+        blocks = MarkdownBlock.parse(source)
+        parsedSource = source
+        headings = blocks.filter { $0.headingLevel != nil }
+        expandedHeadings = Set(headings.filter { $0.parentID == nil }.map(\.id))
+        recordRecentWorkspace()
     }
 
     private func openPDF(_ url: URL) {
@@ -2205,10 +3398,14 @@ struct ReaderView: View {
         }
         pdfPassword = ""
         pendingPDFURL = nil
+        suppressRecentRecording = pendingRecentWorkspace != nil
         installPDF(document, from: url)
+        suppressRecentRecording = false
+        finishPendingRecentWorkspace()
     }
 
     private func installPDF(_ document: PDFDocument, from url: URL) {
+        officeDocumentURL = nil
         guard document.pageCount > 0 else {
             saveError = "这个 PDF 没有可显示的页面。"
             return
@@ -2228,11 +3425,13 @@ struct ReaderView: View {
         epubHasChanges = false
         epubCurrentChapter = 0
         maximizedNotebookPane = nil
-        epubNotebookLayout = .stacked
+        epubNotebookLayout = usesSwitchDisplay ? .epub : .stacked
+        showsNotesTab = false
         documentTitle = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String
             ?? url.deletingPathExtension().lastPathComponent
         beginLoadingReadingProfile(for: url, sourceKind: .pdf, title: documentTitle)
         displayMode = .edit
+        recordRecentWorkspace()
     }
 
     private func navigatePDF(to pageIndex: Int) {
@@ -2268,22 +3467,7 @@ struct ReaderView: View {
 
     private func scheduleWorkspaceWidthSave(_ width: CGFloat) {
         guard width.isFinite, width > 0 else { return }
-        splitWidthSaveTask?.cancel()
-        splitWidthSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            notebookRightPaneWidth = min(1200, max(320, Double(width)))
-        }
-    }
-
-    private func scheduleSidebarWidthSave(_ width: CGFloat) {
-        guard width > 0, abs(width - sidebarWidth) > 1 else { return }
-        sidebarWidthSaveTask?.cancel()
-        sidebarWidthSaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(250))
-            guard !Task.isCancelled else { return }
-            sidebarWidth = Double(width)
-        }
+        notebookRightPaneWidth = max(320, Double(width))
     }
 
     private func scheduleWorkspaceHeightSave(_ topHeight: CGFloat, availableHeight: CGFloat) {
@@ -2294,6 +3478,12 @@ struct ReaderView: View {
             guard !Task.isCancelled else { return }
             notebookVerticalRatio = min(0.85, max(0.15, Double(topHeight / availableHeight)))
         }
+    }
+
+    private func commitOfficeZoomInput() {
+        let parsed = Double(officeZoomInput.replacingOccurrences(of: "%", with: "")) ?? officeZoomPercent
+        officeZoomPercent = parsed.isFinite ? min(500, max(25, parsed)) : officeZoomPercent
+        officeZoomInput = "\(Int(officeZoomPercent))"
     }
 
     private func commitWebZoomInput() {
@@ -2357,19 +3547,26 @@ struct ReaderView: View {
             }
         }
         guard selectedFile != nil else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         source = WebClipFormatter.append(clip, title: webBrowser.title, url: url, to: source)
         let end = (source as NSString).length
         editorSelection = NSRange(location: end, length: 0)
         synchronizedSourceLine = source.components(separatedBy: "\n").count
         sourceLineRequest += 1
+        visualSourceLineRequest += 1
         editorFocusRequest += 1
-        if epubNotebookLayout == .epub { epubNotebookLayout = .stacked }
+        if epubNotebookLayout == .epub { epubNotebookLayout = usesSwitchDisplay ? .notes : .stacked; showsNotesTab = usesSwitchDisplay }
         activateWorkspaceArea(.markdownEditor)
+    }
+
+    private func requestPDFDisplayPreset(_ preset: PDFDisplayPreset) {
+        pdfDisplayPresetRequest = PDFDisplayPresetRequest(
+            sequence: pdfDisplayPresetRequest.sequence &+ 1, preset: preset)
     }
 
     private func commitPDFZoomInput() {
         let parsed = Double(pdfZoomInput.replacingOccurrences(of: "%", with: "")) ?? pdfZoomPercent
-        let bounded = parsed.isFinite ? min(300, max(25, parsed)) : pdfZoomPercent
+        let bounded = parsed.isFinite ? min(1000, max(25, parsed)) : pdfZoomPercent
         pdfZoomPercent = bounded.rounded()
         pdfZoomInput = "\(Int(pdfZoomPercent))"
     }
@@ -2395,13 +3592,33 @@ struct ReaderView: View {
         else if let selectedFile { panel.directoryURL = selectedFile.deletingLastPathComponent() }
         else if let folderURL { panel.directoryURL = folderURL }
         guard panel.runModal() == .OK, let url = panel.url else { return false }
-        if !FileManager.default.fileExists(atPath: url.path),
-           !FileManager.default.createFile(atPath: url.path, contents: Data()) {
-            saveError = "无法创建 Markdown 笔记：\(url.lastPathComponent)"
-            return false
+        if FileManager.default.fileExists(atPath: url.path) {
+            open(url)
+        } else {
+            MarkdownVisualCommandHub.commitActiveEdits {
+                if source != savedSource {
+                    pendingDocumentOperation = .createNote(url)
+                    showUnsavedAlert = true
+                } else {
+                    performCreateMarkdownNote(at: url)
+                }
+            }
         }
-        open(url)
         return selectedFile == url
+    }
+
+    private func performCreateMarkdownNote(at url: URL) {
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            performOpen(url)
+            return
+        }
+        guard FileManager.default.createFile(atPath: url.path, contents: Data()) else {
+            saveError = "无法创建 Markdown 笔记：\(url.lastPathComponent)"
+            return
+        }
+        loadDocument(url, preservingEPUB: epubDocument != nil,
+                     preservingPDF: pdfDocument != nil, preservingWeb: webBrowser.currentURL != nil, preservingOffice: officeDocumentURL != nil)
+        if selectedFile != url { try? FileManager.default.removeItem(at: url) }
     }
 
     private func activateWorkspaceArea(_ area: FocusedWorkspaceArea) {
@@ -2410,6 +3627,9 @@ struct ReaderView: View {
         case .pdf:
             sidebarOutlineTab = .reading
             fontSizeTarget = .pdf
+        case .office:
+            sidebarOutlineTab = .reading
+            fontSizeTarget = .office
         case .epub:
             sidebarOutlineTab = .reading
             fontSizeTarget = .body
@@ -2426,23 +3646,27 @@ struct ReaderView: View {
 
     private func workspaceFocusRing(_ focused: Bool) -> some View {
         RoundedRectangle(cornerRadius: 4)
-            .stroke(focused ? Color.accentColor.opacity(0.34) : Color.clear, lineWidth: focused ? 1 : 0)
+            .stroke(focused ? Color.gray.opacity(0.38) : Color.clear, lineWidth: focused ? 1 : 0)
             .padding(2)
             .allowsHitTesting(false)
     }
 
-    private func saveDocument() -> Bool {
-        if isEPUBNotebook, let selectedFile {
+    private func saveNote() -> Bool {
+        MarkdownSourcePositionHub.flushPendingChanges()
+        if let selectedFile, source != savedSource {
             do {
                 try documentStore.save(MarkdownDocument(url: selectedFile, source: source), to: selectedFile)
                 savedSource = source
-                return true
             } catch {
                 saveError = error.localizedDescription
                 return false
             }
         }
-        if let epubDocument {
+        return true
+    }
+
+    private func saveReadingSource() -> Bool {
+        if epubHasChanges, let epubDocument {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.init(filenameExtension: "epub")!]
             panel.nameFieldStringValue = "\(epubDocument.sourceURL.deletingPathExtension().lastPathComponent)-edited.epub"
@@ -2457,14 +3681,19 @@ struct ReaderView: View {
                 return false
             }
         }
-        guard let selectedFile else { return false }
-        do {
-            try documentStore.save(MarkdownDocument(url: selectedFile, source: source), to: selectedFile)
-            savedSource = source
-            return true
-        } catch {
-            saveError = error.localizedDescription
-            return false
+        return true
+    }
+
+    private func saveDocument() -> Bool {
+        guard saveNote(), saveReadingSource() else { return false }
+        return selectedFile != nil || epubDocument != nil
+    }
+
+    private func savePendingDocumentOperation() -> Bool {
+        switch pendingDocumentOperation {
+        case .closeNote: saveNote()
+        case .closeReadingSource: saveReadingSource()
+        default: saveDocument()
         }
     }
 
@@ -2473,101 +3702,172 @@ struct ReaderView: View {
         pendingDocumentOperation = nil
         switch operation {
         case .open(let url): performOpen(url)
-        case .openFolder(let url): openFolderContents(url)
-        case .closeFile: clearCurrentDocument()
-        case .closePDF: clearPDFDocument()
-        case .closeWeb: clearWebDocument()
-        case .terminate:
-            Task { @MainActor in
-                await flushCurrentReadingProfileAsync()
-                NSApp.reply(toApplicationShouldTerminate: true)
-            }
+        case .openRecentWorkspace(let workspace): performOpenRecentWorkspace(workspace)
+        case .createNote(let url): performCreateMarkdownNote(at: url)
+        case .openEPUBNote(let url, let convertedURL): performOpenEPUBNote(url, convertedURL: convertedURL)
+        case .closeNote: clearNoteDocument()
+        case .closeReadingSource: clearReadingSource()
+        case .closeWindow:
+            if let window = pendingWindowToClose { finishWindowClose(window) }
+            pendingWindowToClose = nil
+        case .terminate: awaitReadingProfileBeforeTermination()
         case nil: break
+        }
+    }
+
+    private func awaitReadingProfileBeforeTermination() {
+        Task { @MainActor in
+            if activeBookURL != nil { await flushCurrentReadingProfileAsync() }
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
     }
 
     private func cancelPendingTermination() {
         let shouldReply = if case .terminate = pendingDocumentOperation { true } else { false }
         pendingDocumentOperation = nil
+        pendingWindowToClose = nil
         if shouldReply { NSApp.reply(toApplicationShouldTerminate: false) }
     }
 
-    private func closeFile() {
-        if pdfDocument != nil {
+    private func requestWindowClose(_ window: NSWindow) {
+        MarkdownVisualCommandHub.commitActiveEdits {
             if isDirty {
-                pendingDocumentOperation = .closePDF
+                pendingWindowToClose = window
+                pendingDocumentOperation = .closeWindow
                 showUnsavedAlert = true
             } else {
-                clearPDFDocument()
+                finishWindowClose(window)
             }
-            return
-        }
-        if webBrowser.currentURL != nil {
-            if isDirty {
-                pendingDocumentOperation = .closeWeb
-                showUnsavedAlert = true
-            } else {
-                clearWebDocument()
-            }
-            return
-        }
-        guard selectedFile != nil || epubDocument != nil else { return }
-        if isDirty {
-            pendingDocumentOperation = .closeFile
-            showUnsavedAlert = true
-        } else {
-            clearCurrentDocument()
         }
     }
 
-    private func clearCurrentDocument() {
-        clearReadingProfileSelection()
-        epubDocument = nil
-        pdfDocument = nil
-        pdfSourceURL = nil
-        webBrowser.close()
-        isEPUBNotebook = false
-        epubHasChanges = false
+    private func finishWindowClose(_ window: NSWindow) {
+        Task { @MainActor in
+            if activeBookURL != nil { await flushCurrentReadingProfileAsync() }
+            window.close()
+        }
+    }
+
+    private func closeFile() {
+        if focusedWorkspaceArea == .outline {
+            switch sidebarOutlineTab {
+            case .files: closeFolder()
+            case .reading: closeReadingSource()
+            case .markdown: closeNote()
+            case .webBookmarks: closeReadingSource()
+            }
+        } else if [.pdf, .epub, .web, .office].contains(focusedWorkspaceArea) {
+            closeReadingSource()
+        } else if selectedFile != nil {
+            closeNote()
+        } else {
+            closeReadingSource()
+        }
+    }
+
+    private var canCloseSidebarSelection: Bool {
+        switch sidebarOutlineTab {
+        case .files: folderURL != nil
+        case .reading: hasReadingSource
+        case .markdown: selectedFile != nil
+        case .webBookmarks: webBrowser.currentURL != nil
+        }
+    }
+
+    private var sidebarCloseTitle: String {
+        switch sidebarOutlineTab {
+        case .files: "关闭文件夹"
+        case .reading: "关闭阅读源"
+        case .markdown: "关闭 Markdown 笔记"
+        case .webBookmarks: "关闭当前网页"
+        }
+    }
+
+    private func closeSidebarSelection() {
+        switch sidebarOutlineTab {
+        case .files: closeFolder()
+        case .reading, .webBookmarks: closeReadingSource()
+        case .markdown: closeNote()
+        }
+    }
+
+    private func closeReadingSource() {
+        if isConvertingKindle {
+            kindleConversionTask?.cancel()
+            kindleConversionTask = nil
+            kindleConversionRevision += 1
+            isConvertingKindle = false
+            pendingRecentWorkspace = nil
+            return
+        }
+        guard hasReadingSource else { return }
+        if epubHasChanges {
+            pendingDocumentOperation = .closeReadingSource
+            showUnsavedAlert = true
+        } else {
+            clearReadingSource()
+        }
+    }
+
+    private func closeNote() {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            guard selectedFile != nil else { return }
+            if source != savedSource {
+                pendingDocumentOperation = .closeNote
+                showUnsavedAlert = true
+            } else {
+                clearNoteDocument()
+            }
+        }
+    }
+
+    private func clearNoteDocument() {
         selectedFile = nil
         source = ""
         savedSource = ""
         blocks = []
         headings = []
+        parsedSource = ""
         expandedHeadings = []
         scrollTarget = nil
         synchronizedSourceLine = 1
         sourceLineRequest += 1
+        visualSourceLineRequest += 1
         editorSelection = NSRange(location: 0, length: 0)
-        documentTitle = markdownFiles.isEmpty ? "选择一个 Markdown 文件开始阅读" : "从文件夹中选择一个 Markdown 文件"
-    }
-
-    private func clearPDFDocument() {
-        clearReadingProfileSelection()
-        pdfDocument = nil
-        pdfSourceURL = nil
-        pdfCurrentPage = 0
-        pdfReadingPosition = nil
-        pdfNavigationRequest += 1
-        maximizedNotebookPane = nil
-        activateWorkspaceArea(.markdownReader)
-        if let selectedFile {
-            documentTitle = selectedFile.deletingPathExtension().lastPathComponent
+        if epubDocument != nil { isEPUBNotebook = false }
+        if let officeDocumentURL {
+            documentTitle = officeDocumentURL.deletingPathExtension().lastPathComponent
+        } else if let pdfDocument {
+            documentTitle = pdfDocument.documentURL?.deletingPathExtension().lastPathComponent ?? "PDF 阅读"
+        } else if let epubDocument {
+            documentTitle = epubDocument.title
+        } else if webBrowser.currentURL != nil {
+            documentTitle = webBrowser.title
         } else {
             documentTitle = "选择一个 Markdown 文件开始阅读"
         }
     }
 
-    private func clearWebDocument() {
+    private func clearReadingSource() {
+        officeDocumentURL = nil
+        officePreviewState.clear()
+        clearReadingProfileSelection()
+        pdfDocument = nil
+        pdfSourceURL = nil
+        epubDocument = nil
+        epubHasChanges = false
+        isEPUBNotebook = false
         webBrowser.close()
+        pdfCurrentPage = 0
+        pdfReadingPosition = nil
+        pdfNavigationRequest += 1
         maximizedNotebookPane = nil
-        activateWorkspaceArea(selectedFile == nil ? .markdownReader : .markdownEditor)
-        sidebarOutlineTab = .markdown
+        activateWorkspaceArea(selectedFile == nil ? .markdownReader : .markdownPreview)
         if let selectedFile {
             documentTitle = selectedFile.deletingPathExtension().lastPathComponent
-            sidebarOutlineTab = .markdown
+            displayMode = usesSwitchDisplay ? .read : .split
         } else {
             documentTitle = "选择一个 Markdown 文件开始阅读"
-            sidebarOutlineTab = .markdown
         }
     }
 
@@ -2583,7 +3883,9 @@ struct ReaderView: View {
     }
 
     private func insertHorizontalRule() {
-        guard selectedFile != nil, displayMode != .read else { return }
+        if applyVisualCommand("rule") { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let location = min(editorSelection.location, original.length)
         let length = min(editorSelection.length, original.length - location)
@@ -2597,11 +3899,14 @@ struct ReaderView: View {
         editorSelection = NSRange(location: caretOffset, length: 0)
         synchronizedSourceLine = (source as NSString).substring(to: caretOffset).components(separatedBy: "\n").count
         sourceLineRequest += 1
+        visualSourceLineRequest += 1
         editorFocusRequest += 1
     }
 
     private func applyHeadingLevel(_ level: Int) {
-        guard (1...6).contains(level), selectedFile != nil, displayMode != .read else { return }
+        if applyVisualCommand("heading", value: String(level)) { return }
+        guard (1...6).contains(level), selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let cursor = min(editorSelection.location, original.length)
         let lineRange = original.lineRange(for: NSRange(location: cursor, length: 0))
@@ -2637,7 +3942,18 @@ struct ReaderView: View {
     }
 
     private func applyInlineSyntax(_ opening: String, _ closing: String) {
-        guard selectedFile != nil, displayMode != .read else { return }
+        let visualName: String? = switch opening {
+        case "**": "bold"
+        case "*": "italic"
+        case "<u>": "underline"
+        case "~~": "strikeThrough"
+        case "`": "code"
+        case "[": "link"
+        default: nil
+        }
+        if let visualName, applyVisualCommand(visualName) { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let location = min(editorSelection.location, original.length)
         let length = min(editorSelection.length, original.length - location)
@@ -2672,7 +3988,16 @@ struct ReaderView: View {
     }
 
     private func applyLinePrefix(_ prefix: String) {
-        guard selectedFile != nil, displayMode != .read else { return }
+        let visualName: String? = switch prefix {
+        case "- ": "unordered"
+        case "1. ": "ordered"
+        case "- [ ] ": "task"
+        case "> ": "quote"
+        default: nil
+        }
+        if let visualName, applyVisualCommand(visualName) { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let selectionStart = min(editorSelection.location, original.length)
         let selectionEnd = min(selectionStart + editorSelection.length, original.length)
@@ -2700,7 +4025,8 @@ struct ReaderView: View {
     }
 
     private func wrapSelection(_ opening: String, _ closing: String) {
-        guard selectedFile != nil, displayMode != .read else { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let location = min(editorSelection.location, original.length)
         let length = min(editorSelection.length, original.length - location)
@@ -2717,7 +4043,9 @@ struct ReaderView: View {
     }
 
     private func clearLinePrefix() {
-        guard selectedFile != nil, displayMode != .read else { return }
+        if applyVisualCommand("paragraph") { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let cursor = min(editorSelection.location, original.length)
         let range = original.lineRange(for: NSRange(location: cursor, length: 0))
@@ -2729,7 +4057,8 @@ struct ReaderView: View {
     }
 
     private func insertTemplate(_ template: String) {
-        guard selectedFile != nil, displayMode != .read else { return }
+        guard selectedFile != nil, canEditMarkdownSource else { return }
+        MarkdownSourcePositionHub.flushPendingChanges()
         let original = source as NSString
         let location = min(editorSelection.location, original.length)
         let length = min(editorSelection.length, original.length - location)
@@ -2764,6 +4093,8 @@ struct ReaderView: View {
         guard panel.runModal() == .OK, let imageURL = panel.url else { return }
         do {
             let markdown = try MarkdownImageAssets.importFile(imageURL, beside: selectedFile)
+            if applyVisualCommand("imageMarkdown", value: markdown) { return }
+            MarkdownSourcePositionHub.flushPendingChanges()
             let original = source as NSString
             let location = min(editorSelection.location, original.length)
             let length = min(editorSelection.length, original.length - location)
@@ -2772,21 +4103,34 @@ struct ReaderView: View {
             source = original.replacingCharacters(in: range, with: insertion)
             editorSelection = NSRange(location: location + (insertion as NSString).length, length: 0)
             if displayMode == .read { displayMode = .edit }
-            if epubNotebookLayout == .epub { epubNotebookLayout = .stacked }
+            if epubNotebookLayout == .epub { epubNotebookLayout = usesSwitchDisplay ? .notes : .stacked; showsNotesTab = usesSwitchDisplay }
             editorFocusRequest += 1
         } catch {
             saveError = "无法插入图片：\(error.localizedDescription)"
         }
     }
 
+    private func importVisualClipboardImage(_ pasteboard: NSPasteboard) -> String? {
+        guard let selectedFile else { return nil }
+        do {
+            return try MarkdownImageAssets.importClipboard(pasteboard, beside: selectedFile)
+        } catch {
+            saveError = "无法粘贴图片：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
     private func scheduleParse(for text: String) {
         parseTask?.cancel()
         parseTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(140))
+            // Parsing a long document while source typing resumes competes with
+            // the input method and layout work. Wait for a genuine pause.
+            try? await Task.sleep(for: .milliseconds(650))
             guard !Task.isCancelled else { return }
             let parsed = await Task.detached(priority: .userInitiated) { MarkdownBlock.parse(text) }.value
             guard !Task.isCancelled, source == text else { return }
             blocks = parsed
+            parsedSource = text
             headings = parsed.filter { $0.headingLevel != nil }
             expandedHeadings.formIntersection(Set(headings.map(\.id)))
         }
@@ -2875,6 +4219,9 @@ struct HeadingStyle: Codable, Identifiable, Equatable {
 }
 
 struct SettingsView: View {
+    let scopeTitle: String
+    let isReadingScope: Bool
+    let isSourceScope: Bool
     @Binding var readerWidth: Double
     @Binding var bodyColorHex: String
     @Binding var readerBackgroundHex: String
@@ -2891,12 +4238,17 @@ struct SettingsView: View {
     @Binding var annotationFontFamily: String
     @Binding var annotationTextColorHex: String
     let readingDataLocation: String
+    let embedded: Bool
     let onDone: () -> Void
     @State private var styles: [HeadingStyle]
     @State private var outlineColors: [String]
     private let families = ["系统默认", "PingFang SC", "Songti SC", "Heiti SC", "SF Pro Text", "Avenir Next", "Georgia", "Menlo"]
 
-    init(readerWidth: Binding<Double>, bodyColorHex: Binding<String>, readerBackgroundHex: Binding<String>, strongColorHex: Binding<String>, strongSize: Binding<Double>, strongFamily: Binding<String>, headingStylesData: Binding<Data>, bodySize: Binding<Double>, bodyFamily: Binding<String>, lineHeight: Binding<Double>, paragraphSpacing: Binding<Double>, outlineColorsData: Binding<Data>, annotationFontSize: Binding<Double>, annotationFontFamily: Binding<String>, annotationTextColorHex: Binding<String>, readingDataLocation: String, onDone: @escaping () -> Void) {
+    init(scopeTitle: String, isReadingScope: Bool, isSourceScope: Bool,
+         readerWidth: Binding<Double>, bodyColorHex: Binding<String>, readerBackgroundHex: Binding<String>, strongColorHex: Binding<String>, strongSize: Binding<Double>, strongFamily: Binding<String>, headingStylesData: Binding<Data>, bodySize: Binding<Double>, bodyFamily: Binding<String>, lineHeight: Binding<Double>, paragraphSpacing: Binding<Double>, outlineColorsData: Binding<Data>, annotationFontSize: Binding<Double>, annotationFontFamily: Binding<String>, annotationTextColorHex: Binding<String>, readingDataLocation: String, onDone: @escaping () -> Void) {
+        self.scopeTitle = scopeTitle
+        self.isReadingScope = isReadingScope
+        self.isSourceScope = isSourceScope
         _readerWidth = readerWidth; _strongColorHex = strongColorHex; _strongSize = strongSize
         _bodyColorHex = bodyColorHex
         _readerBackgroundHex = readerBackgroundHex
@@ -2907,19 +4259,45 @@ struct SettingsView: View {
         _annotationFontFamily = annotationFontFamily
         _annotationTextColorHex = annotationTextColorHex
         self.readingDataLocation = readingDataLocation
+        self.embedded = false
+        self.onDone = onDone
+        _styles = State(initialValue: (try? JSONDecoder().decode([HeadingStyle].self, from: headingStylesData.wrappedValue)) ?? HeadingStyle.defaults)
+        _outlineColors = State(initialValue: (try? JSONDecoder().decode([String].self, from: outlineColorsData.wrappedValue)) ?? Array(repeating: "#222222", count: 6))
+    }
+
+    init(scopeTitle: String, isReadingScope: Bool, isSourceScope: Bool,
+         readerWidth: Binding<Double>, bodyColorHex: Binding<String>, readerBackgroundHex: Binding<String>, strongColorHex: Binding<String>, strongSize: Binding<Double>, strongFamily: Binding<String>, headingStylesData: Binding<Data>, bodySize: Binding<Double>, bodyFamily: Binding<String>, lineHeight: Binding<Double>, paragraphSpacing: Binding<Double>, outlineColorsData: Binding<Data>, annotationFontSize: Binding<Double>, annotationFontFamily: Binding<String>, annotationTextColorHex: Binding<String>, readingDataLocation: String, embedded: Bool, onDone: @escaping () -> Void) {
+        self.scopeTitle = scopeTitle
+        self.isReadingScope = isReadingScope
+        self.isSourceScope = isSourceScope
+        _readerWidth = readerWidth; _strongColorHex = strongColorHex; _strongSize = strongSize
+        _bodyColorHex = bodyColorHex
+        _readerBackgroundHex = readerBackgroundHex
+        _strongFamily = strongFamily; _headingStylesData = headingStylesData
+        _bodySize = bodySize; _bodyFamily = bodyFamily; _lineHeight = lineHeight; _paragraphSpacing = paragraphSpacing
+        _outlineColorsData = outlineColorsData
+        _annotationFontSize = annotationFontSize
+        _annotationFontFamily = annotationFontFamily
+        _annotationTextColorHex = annotationTextColorHex
+        self.readingDataLocation = readingDataLocation
+        self.embedded = embedded
         self.onDone = onDone
         _styles = State(initialValue: (try? JSONDecoder().decode([HeadingStyle].self, from: headingStylesData.wrappedValue)) ?? HeadingStyle.defaults)
         _outlineColors = State(initialValue: (try? JSONDecoder().decode([String].self, from: outlineColorsData.wrappedValue)) ?? Array(repeating: "#222222", count: 6))
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack { Text("阅读样式").font(.system(size: 18, weight: .semibold)); Spacer(); Button("完成") { save(); onDone() }.keyboardShortcut(.defaultAction) }
+            if !embedded {
+                HStack { Text(scopeTitle).font(.system(size: 18, weight: .semibold)); Spacer(); Button("完成") { save(); onDone() }.keyboardShortcut(.defaultAction) }
+            } else {
+                Text(scopeTitle).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+            }
             Form {
                 Section("正文") {
-                    LabeledContent("阅读宽度", value: "\(Int(readerWidth)) px")
+                    LabeledContent(isSourceScope ? "编辑宽度" : "阅读宽度", value: "\(Int(readerWidth)) px")
                     Slider(value: $readerWidth, in: 520...1040, step: 20)
                     HStack {
-                        Text("阅读背景颜色"); Spacer()
+                        Text(isSourceScope ? "编辑背景颜色" : "阅读背景颜色"); Spacer()
                         ColorPicker("", selection: Binding(get: { Color(hex: readerBackgroundHex) }, set: { readerBackgroundHex = $0.hexString }), supportsOpacity: false).labelsHidden()
                         TextField("#FFFFFF", text: $readerBackgroundHex).frame(width: 90).textFieldStyle(.roundedBorder)
                     }
@@ -2942,13 +4320,15 @@ struct SettingsView: View {
                         ColorPicker("", selection: Binding(get: { Color(hex: strongColorHex) }, set: { strongColorHex = $0.hexString }), supportsOpacity: false).labelsHidden()
                         TextField("#A5563A", text: $strongColorHex).frame(width: 90).textFieldStyle(.roundedBorder)
                     }
-                    Picker("加粗文字字体", selection: $strongFamily) {
-                        ForEach(families, id: \.self) { Text($0).font(.custom($0, size: 12)).tag($0) }
+                    if !isSourceScope {
+                        Picker("加粗文字字体", selection: $strongFamily) {
+                            ForEach(families, id: \.self) { Text($0).font(.custom($0, size: 12)).tag($0) }
+                        }
+                        LabeledContent("加粗文字字号", value: "\(Int(strongSize)) pt")
+                        Slider(value: $strongSize, in: 13...22, step: 1)
                     }
-                    LabeledContent("加粗文字字号", value: "\(Int(strongSize)) pt")
-                    Slider(value: $strongSize, in: 13...22, step: 1)
                 }
-                Section("EPUB 注释文字") {
+                if isReadingScope { Section("EPUB 注释文字") {
                     HStack {
                         Text("注释文字颜色"); Spacer()
                         ColorPicker("", selection: Binding(
@@ -2962,28 +4342,30 @@ struct SettingsView: View {
                     }
                     LabeledContent("注释字号", value: "\(Int(annotationFontSize)) pt")
                     Slider(value: $annotationFontSize, in: 9...18, step: 1)
-                }
-                Section("跨设备阅读资料") {
+                } }
+                if isReadingScope { Section("跨设备阅读资料") {
                     LabeledContent("保存位置", value: readingDataLocation)
                     Text("此处保存书籍标识、阅读位置、阅读样式、EPUB 批注和网页收藏。原书与 Markdown 笔记文件保留在原位置。使用 iCloud Drive 时，这些阅读资料会随 iCloud 同步。")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                }
+                } }
                 Section("标题样式") {
                     ForEach($styles) { $style in
                         HStack(spacing: 10) {
                             Text("H\(style.id)").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(.secondary).frame(width: 25)
                             ColorPicker("", selection: Binding(get: { Color(hex: style.colorHex) }, set: { style.colorHex = $0.hexString }), supportsOpacity: false).labelsHidden()
-                            Picker("字体", selection: $style.fontFamily) {
-                                ForEach(families, id: \.self) { Text($0).font($0 == "系统默认" ? .system(size: 12) : .custom($0, size: 12)).tag($0) }
-                            }.labelsHidden().frame(width: 130)
-                            Slider(value: $style.size, in: 13...40, step: 1).frame(width: 95)
-                            Text("\(Int(style.size))").font(.system(size: 10, design: .rounded).monospacedDigit()).foregroundStyle(.tertiary).frame(width: 22)
-                            Toggle("粗体", isOn: $style.bold).labelsHidden().toggleStyle(.switch).scaleEffect(0.75)
+                            if !isSourceScope {
+                                Picker("字体", selection: $style.fontFamily) {
+                                    ForEach(families, id: \.self) { Text($0).font($0 == "系统默认" ? .system(size: 12) : .custom($0, size: 12)).tag($0) }
+                                }.labelsHidden().frame(width: 130)
+                                Slider(value: $style.size, in: 13...(isReadingScope ? 40 : 60), step: 1).frame(width: 95)
+                                Text("\(Int(style.size))").font(.system(size: 10, design: .rounded).monospacedDigit()).foregroundStyle(.tertiary).frame(width: 22)
+                                Toggle("粗体", isOn: $style.bold).labelsHidden().toggleStyle(.switch).scaleEffect(0.75)
+                            }
                         }
                     }
                 }
-                Section("目录文字颜色") {
+                if !isSourceScope { Section("目录文字颜色") {
                     ForEach(0..<6, id: \.self) { index in
                         HStack {
                             Text("H\(index + 1)").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).frame(width: 32, alignment: .leading)
@@ -2996,15 +4378,17 @@ struct SettingsView: View {
                             TextField("#222222", text: $outlineColors[index]).frame(width: 90).textFieldStyle(.roundedBorder)
                         }
                     }
-                }
+                } }
             }.formStyle(.grouped)
             HStack {
                 Spacer()
-                Button("恢复所有默认设置") { restoreDefaults() }
+                Button(isReadingScope ? "恢复阅读默认设置" : "恢复此视图默认设置") { restoreDefaults() }
             }
         }
-        .padding(22)
-        .frame(width: 640, height: 760)
+        .padding(.horizontal, 22)
+        .padding(.top, embedded ? 12 : 22)
+        .padding(.bottom, 22)
+        .frame(width: 640, height: embedded ? 740 : 760)
         .onDisappear(perform: save)
     }
     private func restoreDefaults() {
@@ -3013,14 +4397,24 @@ struct SettingsView: View {
         bodyColorHex = "#282725"
         readerBackgroundHex = "#FFFFFF"
         strongSize = 15
+        if !isReadingScope && !isSourceScope {
+            for index in styles.indices {
+                if let size = MarkdownDisplayStyle.previewHeadingSizes[styles[index].id] {
+                    styles[index].size = size
+                }
+            }
+            strongSize = 18
+        }
         strongFamily = "系统默认"
-        annotationFontSize = 11
-        annotationFontFamily = "系统默认"
-        annotationTextColorHex = "#777777"
+        if isReadingScope {
+            annotationFontSize = 11
+            annotationFontFamily = "系统默认"
+            annotationTextColorHex = "#777777"
+        }
         bodySize = 15
         bodyFamily = "系统默认"
-        lineHeight = 1.85
-        paragraphSpacing = 13
+        lineHeight = isSourceScope ? 1.4 : 1.85
+        paragraphSpacing = isSourceScope ? 8 : 13
         readerWidth = 720
         outlineColors = Array(repeating: "#222222", count: 6)
         save()
@@ -3031,20 +4425,14 @@ struct SettingsView: View {
     }
 }
 
-private struct WorkspacePaneWidthPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
+
 
 private struct WorkspacePaneHeightPreferenceKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
-private struct SidebarWidthPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
+
 
 struct TableInsertionSheet: View {
     @Environment(\.dismiss) private var dismiss

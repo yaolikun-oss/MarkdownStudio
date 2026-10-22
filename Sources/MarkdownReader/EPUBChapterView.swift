@@ -3,6 +3,19 @@ import AppKit
 import SwiftUI
 import WebKit
 
+enum EPUBArrowKeyRouting {
+    static func chapterOffset(keyCode: UInt16, modifiers: NSEvent.ModifierFlags,
+                              enabled: Bool, firstResponderInsideEPUB: Bool) -> Int? {
+        guard enabled, firstResponderInsideEPUB,
+              modifiers.intersection([.command, .control, .option, .shift]).isEmpty else { return nil }
+        return switch keyCode {
+        case 123: -1
+        case 124: 1
+        default: nil
+        }
+    }
+}
+
 struct EPUBChapterView: NSViewRepresentable {
     let chapter: EPUBChapter
     let resourceRoot: URL
@@ -73,6 +86,7 @@ struct EPUBChapterView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        WorkspaceKeyboardFocus.readingView = webView
         context.coordinator.onBodyChange = onBodyChange
         context.coordinator.onTextSelection = onTextSelection
         context.coordinator.onEditAnnotation = onEditAnnotation
@@ -524,24 +538,21 @@ private final class EPUBReaderWebView: WKWebView {
     var onActivate: (() -> Void)?
 
     override func mouseDown(with event: NSEvent) {
-        onActivate?()
-        super.mouseDown(with: event)
+        WorkspaceMouseDownHandling.perform(
+            nativeMouseDown: { super.mouseDown(with: event) },
+            activateWorkspace: { [weak self] in self?.onActivate?() }
+        )
     }
 
     override func keyDown(with event: NSEvent) {
-        let navigationModifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
-        guard allowsChapterNavigation, event.modifierFlags.intersection(navigationModifiers).isEmpty else {
+        guard let offset = EPUBArrowKeyRouting.chapterOffset(
+            keyCode: event.keyCode, modifiers: event.modifierFlags,
+            enabled: allowsChapterNavigation, firstResponderInsideEPUB: true
+        ) else {
             super.keyDown(with: event)
             return
         }
-        switch event.keyCode {
-        case 123:
-            onNavigateChapter?(-1)
-        case 124:
-            onNavigateChapter?(1)
-        default:
-            super.keyDown(with: event)
-        }
+        onNavigateChapter?(offset)
     }
 }
 
@@ -581,22 +592,32 @@ struct EPUBArrowKeyMonitor: NSViewRepresentable {
         func installIfNeeded() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.isEnabled, NSApp.isActive,
+                guard let self, NSApp.isActive,
                       event.window != nil, event.window === NSApp.keyWindow,
-                      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else {
+                      let offset = EPUBArrowKeyRouting.chapterOffset(
+                        keyCode: event.keyCode, modifiers: event.modifierFlags,
+                        enabled: self.isEnabled,
+                        firstResponderInsideEPUB: self.isFirstResponderInsideEPUB(in: event.window)
+                      ) else {
                     return event
                 }
-                switch event.keyCode {
-                case 123:
-                    self.onNavigateChapter(-1)
-                    return nil
-                case 124:
-                    self.onNavigateChapter(1)
-                    return nil
-                default:
-                    return event
-                }
+                self.onNavigateChapter(offset)
+                return nil
             }
+        }
+
+        /// The monitor is installed at the workspace level as a fallback for
+        /// WebKit's internal content view. It must only consume arrows while
+        /// that EPUB view owns keyboard focus; workspace focus alone can lag
+        /// behind when the user clicks directly into a Markdown editor.
+        private func isFirstResponderInsideEPUB(in window: NSWindow?) -> Bool {
+            guard let firstResponder = window?.firstResponder as? NSView else { return false }
+            var current: NSView? = firstResponder
+            while let view = current {
+                if view is EPUBReaderWebView { return true }
+                current = view.superview
+            }
+            return false
         }
 
         func removeMonitor() {

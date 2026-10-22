@@ -1,0 +1,22 @@
+Building for debugging...
+[Using on-disk description]
+[2 / 7] MarkdownReaderTests-product
+[4 / 9] MarkdownReaderTests-product
+[7 / 10] MarkdownReaderTests-product
+[9 / 13] MarkdownReaderTests-product
+Build complete! (1.23秒)
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite NotebookSplitViewTests started.
+◇ Test keepsRequestedNotesWidthIndependentOfPaneContentAndAvailableWidth() started.
+➜ Test nativeDragStartsBesideTheThinLineAndSavesOnlyAfterRelease() skipped: "Native mouse tracking must run in its own test process"
+◇ Test nativeDividerKeepsItsPositionAcrossContentSwitchesAndResize() started.
+◇ Test dividerHasAGrabAreaOnBothSidesAndSidebarKeepsItsWidth() started.
+◇ Test clampsRightPaneOnlyWhenMinimumPaneWidthsRequireIt() started.
+✔ Test clampsRightPaneOnlyWhenMinimumPaneWidthsRequireIt() passed after 0.001 seconds.
+✔ Test keepsRequestedNotesWidthIndependentOfPaneContentAndAvailableWidth() passed after 0.001 seconds.
+✔ Test dividerHasAGrabAreaOnBothSidesAndSidebarKeepsItsWidth() passed after 0.038 seconds.
+✔ Test nativeDividerKeepsItsPositionAcrossContentSwitchesAndResize() passed after 0.052 seconds.
+✔ Suite NotebookSplitViewTests passed after 0.052 seconds.
+✔ Test run with 5 tests in 1 suite passed after 0.052 seconds.

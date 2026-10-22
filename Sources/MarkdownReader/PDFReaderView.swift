@@ -2,6 +2,17 @@ import AppKit
 import PDFKit
 import SwiftUI
 
+enum PDFDisplayPreset: Equatable {
+    case fitWidth
+    case fitHeight
+    case best
+}
+
+struct PDFDisplayPresetRequest: Equatable {
+    let sequence: Int
+    let preset: PDFDisplayPreset
+}
+
 struct PDFReaderView: NSViewRepresentable {
     let document: PDFDocument
     @Binding var zoomPercent: Double
@@ -9,6 +20,7 @@ struct PDFReaderView: NSViewRepresentable {
     @Binding var readingPosition: PDFReadingPosition?
     let documentID: String
     let navigationRequest: Int
+    let displayPresetRequest: PDFDisplayPresetRequest
     let isReadingProfileLoading: Bool
     let backgroundColor: Color
     let onActivate: () -> Void
@@ -33,6 +45,7 @@ struct PDFReaderView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
+        WorkspaceKeyboardFocus.readingView = view
         context.coordinator.parent = self
         (view as? ActivatingPDFView)?.onActivate = onActivate
         view.backgroundColor = NSColor(backgroundColor)
@@ -52,9 +65,14 @@ struct PDFReaderView: NSViewRepresentable {
             if let page = document.page(at: safeIndex) { view.go(to: page) }
         }
 
-        let requestedZoom = min(300, max(25, zoomPercent))
+        let requestedZoom = min(1000, max(25, zoomPercent))
         if abs(context.coordinator.lastAppliedZoom - requestedZoom) > 0.5 {
             context.coordinator.applyZoom(requestedZoom, to: view)
+        }
+
+        if context.coordinator.lastDisplayPresetSequence != displayPresetRequest.sequence {
+            context.coordinator.lastDisplayPresetSequence = displayPresetRequest.sequence
+            context.coordinator.applyDisplayPreset(displayPresetRequest.preset, to: view)
         }
 
         if isFirstUpdate {
@@ -85,12 +103,16 @@ struct PDFReaderView: NSViewRepresentable {
         weak var pdfView: PDFView?
         var lastNavigationRequest = -1
         var lastAppliedZoom = 100.0
+        var lastDisplayPresetSequence = 0
         var restoredDocumentID: String?
         var wasReadingProfileLoading = false
         private var observers: [NSObjectProtocol] = []
         private var positionSaveTask: Task<Void, Never>?
 
-        init(parent: PDFReaderView) { self.parent = parent }
+        init(parent: PDFReaderView) {
+            self.parent = parent
+            lastDisplayPresetSequence = parent.displayPresetRequest.sequence
+        }
 
         func attach(to view: PDFView) {
             pdfView = view
@@ -131,6 +153,38 @@ struct PDFReaderView: NSViewRepresentable {
                 view.scaleFactor = min(view.maxScaleFactor, max(view.minScaleFactor, fitScale * percent / 100))
                 self.publishCurrentZoom()
             }
+        }
+
+        func applyDisplayPreset(_ preset: PDFDisplayPreset, to view: PDFView) {
+            view.layoutSubtreeIfNeeded()
+            guard let page = view.currentPage ?? view.document?.page(at: 0) else { return }
+            let pageBounds = page.bounds(for: view.displayBox)
+            let viewport = Self.findScrollView(in: view)?.contentView.frame.size ?? view.bounds.size
+            // Reserve PDFKit's page-break margins and room for a scroll bar.
+            let width = viewport.width - view.pageBreakMargins.left - view.pageBreakMargins.right - 16
+            let height = viewport.height - view.pageBreakMargins.top - view.pageBreakMargins.bottom - 16
+            guard pageBounds.width.isFinite, pageBounds.width > 0,
+                  pageBounds.height.isFinite, pageBounds.height > 0,
+                  width.isFinite, width > 0, height.isFinite, height > 0 else { return }
+            let fitWidth = width / pageBounds.width
+            let fitHeight = height / pageBounds.height
+            let target: CGFloat
+            switch preset {
+            case .fitWidth: target = fitWidth
+            case .fitHeight: target = fitHeight
+            case .best:
+                let backingScale = view.window?.backingScaleFactor
+                    ?? view.convertToBacking(NSSize(width: 1, height: 1)).width
+                target = PDFRasterScaleDetector.nativePixelScale(for: page, backingScale: backingScale)
+                    ?? min(fitWidth, fitHeight)
+            }
+            let fitScale = view.scaleFactorForSizeToFit
+            let relativeMaximum = fitScale.isFinite && fitScale > 0 ? fitScale * 10 : view.maxScaleFactor
+            let maximum = max(view.minScaleFactor, min(view.maxScaleFactor, relativeMaximum))
+            let scale = min(maximum, max(view.minScaleFactor, target))
+            view.autoScales = false
+            view.scaleFactor = scale
+            publishCurrentZoom()
         }
 
         func restoreReadingPosition(_ position: PDFReadingPosition?, in view: PDFView) {
@@ -200,7 +254,7 @@ struct PDFReaderView: NSViewRepresentable {
             }
             let fitScale = view.scaleFactorForSizeToFit
             guard fitScale.isFinite, fitScale > 0 else { return }
-            let percent = min(300, max(25, (view.scaleFactor / fitScale * 100).rounded()))
+            let percent = min(1000, max(25, (view.scaleFactor / fitScale * 100).rounded()))
             lastAppliedZoom = percent
             if parent.zoomPercent != percent { parent.zoomPercent = percent }
         }

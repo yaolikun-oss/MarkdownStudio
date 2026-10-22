@@ -1,0 +1,180 @@
+Building for debugging...
+[Using on-disk description]
+Build complete! (0.28秒)
+Test Suite 'All tests' started at 2026-10-16 21:20:05.897.
+Test Suite 'All tests' passed at 2026-10-16 21:20:05.898.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'All tests' started at 2026-10-16 21:20:05.945.
+Test Suite 'All tests' passed at 2026-10-16 21:20:05.945.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite MarkdownImageAssetsTests started.
+◇ Suite NotebookSplitViewTests started.
+◇ Suite WebClipTests started.
+◇ Suite MarkdownEditorPositionTests started.
+◇ Test pastingScreenshotWritesAnAdjacentPNGAndRendersAnImage() started.
+◇ Suite PDFReaderViewTests started.
+◇ Suite KindleBookConverterTests started.
+◇ Suite MarkdownVisualEditorTests started.
+◇ Suite MarkdownSourceEditorTests started.
+◇ Test imageInsertionRespectsParagraphBoundaries() started.
+◇ Test imageClipboardDetectionLeavesPlainTextPasteAlone() started.
+◇ Test editorEnablesPasteForAnImageAndInsertsTheLink() started.
+◇ Test dividerHasAGrabAreaOnBothSidesAndSidebarKeepsItsWidth() started.
+◇ Test clampsRightPaneOnlyWhenMinimumPaneWidthsRequireIt() started.
+◇ Test keepsRequestedNotesWidthIndependentOfPaneContentAndAvailableWidth() started.
+➜ Test nativeDragStartsBesideTheThinLineAndSavesOnlyAfterRelease() skipped: "Native mouse tracking must run in its own test process"
+◇ Test addressEntrySupportsSitesAndSearchTerms() started.
+◇ Test nativeDividerKeepsItsPositionAcrossContentSwitchesAndResize() started.
+◇ Test editsBeforeTheCaretUseCurrentBlockOffsetsRatherThanOldLineNumbers() started.
+◇ Test readingSplitDoesNotSendVisualFormattingToHiddenSource() started.
+◇ Test clipFormatterAddsSourceAndPageLocation() started.
+◇ Test initialPDFKitPositionDoesNotReplaceSavedProfileWhileLoading() started.
+◇ Test fullPageRasterUsesOneSourcePixelPerBackingPixel() started.
+◇ Test sourceAndVisualPositionsAgreeThroughChineseFormatting() started.
+◇ Test smallIllustrationIsNotMistakenForPageScan() started.
+◇ Test missingConverterAndUnsupportedFormatGiveSpecificErrors() started.
+◇ Test fitWidthRecalculatesAfterReaderResize() started.
+◇ Test realCalibreRoundTripRetainsBothChaptersAndImage() started.
+◇ Test vectorPageBestDisplayShowsWholePage() started.
+◇ Test cancellingConversionStopsItsProcess() started.
+◇ Test invalidConversionIsRejectedWithoutPublishingCache() started.
+◇ Test selectionClipKeepsHeadingAndListStructure() started.
+◇ Test fitHeightUsesVisibleReaderHeight() started.
+◇ Test conversionUsesOriginalIdentityAndReusesVerifiedCache() started.
+◇ Test lastLineCanScrollUpByHalfAViewport() started.
+◇ Test editingAtTheEndPreservesFormattingCaretViewportAndDividerAcrossModes() started.
+◇ Test committedEditUpdatesBindingBeforeDeferredHighlight() started.
+◇ Test workspaceActivationRunsAfterNativeCaretPlacement() started.
+◇ Test insertionPointTracksRenderedLineInLongSource() started.
+◇ Test localHighlightKeepsFenceStateInLongDocument() started.
+✔ Test keepsRequestedNotesWidthIndependentOfPaneContentAndAvailableWidth() passed after 0.001 seconds.
+✔ Test clampsRightPaneOnlyWhenMinimumPaneWidthsRequireIt() passed after 0.001 seconds.
+✔ Test realCalibreRoundTripRetainsBothChaptersAndImage() passed after 0.001 seconds.
+✔ Test readingSplitDoesNotSendVisualFormattingToHiddenSource() passed after 0.001 seconds.
+✔ Test clipFormatterAddsSourceAndPageLocation() passed after 0.001 seconds.
+✔ Test editsBeforeTheCaretUseCurrentBlockOffsetsRatherThanOldLineNumbers() passed after 0.002 seconds.
+✔ Test sourceAndVisualPositionsAgreeThroughChineseFormatting() passed after 0.004 seconds.
+✔ Suite MarkdownEditorPositionTests passed after 0.004 seconds.
+2026-10-16 21:20:05.983 swiftpm-testing-helper[18513:4395091] Unrecognized colorspace number -1
+2026-10-16 21:20:05.983 swiftpm-testing-helper[18513:4395091] Unknown number of components for colorspace model -1
+✔ Test missingConverterAndUnsupportedFormatGiveSpecificErrors() passed after 0.007 seconds.
+✔ Test pastingScreenshotWritesAnAdjacentPNGAndRendersAnImage() passed after 0.009 seconds.
+✔ Test imageClipboardDetectionLeavesPlainTextPasteAlone() passed after 0.009 seconds.
+✔ Test imageInsertionRespectsParagraphBoundaries() passed after 0.009 seconds.
+✔ Test dividerHasAGrabAreaOnBothSidesAndSidebarKeepsItsWidth() passed after 0.054 seconds.
+✔ Test editorEnablesPasteForAnImageAndInsertsTheLink() passed after 0.073 seconds.
+✔ Suite MarkdownImageAssetsTests passed after 0.073 seconds.
+✔ Test nativeDividerKeepsItsPositionAcrossContentSwitchesAndResize() passed after 0.088 seconds.
+✔ Suite NotebookSplitViewTests passed after 0.088 seconds.
+✔ Test addressEntrySupportsSitesAndSearchTerms() passed after 0.088 seconds.
+✔ Test fullPageRasterUsesOneSourcePixelPerBackingPixel() passed after 0.128 seconds.
+✔ Test smallIllustrationIsNotMistakenForPageScan() passed after 0.138 seconds.
+✔ Test invalidConversionIsRejectedWithoutPublishingCache() passed after 0.139 seconds.
+✔ Test fitWidthRecalculatesAfterReaderResize() passed after 0.146 seconds.
+✔ Test vectorPageBestDisplayShowsWholePage() passed after 0.147 seconds.
+✔ Test conversionUsesOriginalIdentityAndReusesVerifiedCache() passed after 0.153 seconds.
+✔ Test fitHeightUsesVisibleReaderHeight() passed after 0.153 seconds.
+✔ Test cancellingConversionStopsItsProcess() passed after 0.187 seconds.
+✔ Suite KindleBookConverterTests passed after 0.187 seconds.
+✔ Test lastLineCanScrollUpByHalfAViewport() passed after 0.223 seconds.
+✔ Test insertionPointTracksRenderedLineInLongSource() passed after 0.292 seconds.
+✔ Test localHighlightKeepsFenceStateInLongDocument() passed after 0.303 seconds.
+✔ Test workspaceActivationRunsAfterNativeCaretPlacement() passed after 0.313 seconds.
+✔ Test selectionClipKeepsHeadingAndListStructure() passed after 0.405 seconds.
+✔ Suite WebClipTests passed after 0.405 seconds.
+✔ Test committedEditUpdatesBindingBeforeDeferredHighlight() passed after 0.442 seconds.
+✔ Suite MarkdownSourceEditorTests passed after 0.442 seconds.
+2026-10-16 21:20:06.594 swiftpm-testing-helper[18513:4395103] addTextFromVisionDocument: numWordQuads = 2, elapsedTime = 0.00266111 secs
+2026-10-16 21:20:06.656 swiftpm-testing-helper[18513:4395104] addTextFromVisionDocument: numWordQuads = 2, elapsedTime = 0.0005759 secs
+✔ Test initialPDFKitPositionDoesNotReplaceSavedProfileWhileLoading() passed after 0.712 seconds.
+✔ Suite PDFReaderViewTests passed after 0.712 seconds.
+2026-10-16 21:20:06.714 swiftpm-testing-helper[18513:4395099] addTextFromVisionDocument: numWordQuads = 2, elapsedTime = 0.000842929 secs
+2026-10-16 21:20:06.774 swiftpm-testing-helper[18513:4395104] addTextFromVisionDocument: numWordQuads = 2, elapsedTime = 0.000531077 secs
+2026-10-16 21:20:06.839 swiftpm-testing-helper[18513:4395099] addTextFromVisionDocument: numWordQuads = 2, elapsedTime = 0.000574946 secs
+✔ Test editingAtTheEndPreservesFormattingCaretViewportAndDividerAcrossModes() passed after 2.341 seconds.
+◇ Test inlineFormattingInDivAndRootDoesNotManufactureLines() started.
+✔ Test inlineFormattingInDivAndRootDoesNotManufactureLines() passed after 0.207 seconds.
+◇ Test formattingWithRealReaderCSSKeepsParagraphAndHeadingStructure() started.
+✔ Test formattingWithRealReaderCSSKeepsParagraphAndHeadingStructure() passed after 0.055 seconds.
+◇ Test renderedSoftLineBreakDoesNotBecomeAnExtraParagraphDuringVisualEditing() started.
+✔ Test renderedSoftLineBreakDoesNotBecomeAnExtraParagraphDuringVisualEditing() passed after 0.046 seconds.
+◇ Test untouchedBlocksKeepTheirOriginalMarkdown() started.
+✔ Test untouchedBlocksKeepTheirOriginalMarkdown() passed after 0.001 seconds.
+◇ Test blankDocumentBecomesEditableMarkdown() started.
+✔ Test blankDocumentBecomesEditableMarkdown() passed after 0.001 seconds.
+◇ Test rawHTMLAndFootnotesRemainSourceOnly() started.
+✔ Test rawHTMLAndFootnotesRemainSourceOnly() passed after 0.001 seconds.
+◇ Test longDocumentIsSegmentedWithoutChangingSource() started.
+✔ Test longDocumentIsSegmentedWithoutChangingSource() passed after 2.157 seconds.
+◇ Test webKitDOMSerializationKeepsInlineMarksAndLineBreaks() started.
+✔ Test webKitDOMSerializationKeepsInlineMarksAndLineBreaks() passed after 0.052 seconds.
+◇ Test webKitContentEditableDivLinesDoNotBecomeMarkdownParagraphs() started.
+✔ Test webKitContentEditableDivLinesDoNotBecomeMarkdownParagraphs() passed after 0.051 seconds.
+◇ Test visualEditRoundTripsChineseEmphasisAndSurroundingText() started.
+✔ Test visualEditRoundTripsChineseEmphasisAndSurroundingText() passed after 0.052 seconds.
+◇ Test applyingBoldInVisualEditorPreservesParagraphAndInlineFormatting() started.
+✔ Test applyingBoldInVisualEditorPreservesParagraphAndInlineFormatting() passed after 0.052 seconds.
+◇ Test boldCommandKeepsAnH5HeadingAsAHeading() started.
+H5 BOLD DOM: <h5 id="heading-0"><span style="font-weight: normal;">联系强度</span></h5>
+
+H5 BOLD MARKDOWN: ##### 联系强度
+✔ Test boldCommandKeepsAnH5HeadingAsAHeading() passed after 0.051 seconds.
+◇ Test immediateSourceSwitchFlushesEditsFromLateDocumentBlocks() started.
+✔ Test immediateSourceSwitchFlushesEditsFromLateDocumentBlocks() passed after 0.052 seconds.
+◇ Test applyingBoldAcrossExistingEmphasisDoesNotSplitParagraph() started.
+✔ Test applyingBoldAcrossExistingEmphasisDoesNotSplitParagraph() passed after 0.050 seconds.
+◇ Test screenshotFixtureSurvivesVisualParagraphEdit() started.
+✔ Test screenshotFixtureSurvivesVisualParagraphEdit() passed after 0.063 seconds.
+◇ Test fullSampleVisualEditRoundTripsThroughMarkdownDocument() started.
+✔ Test fullSampleVisualEditRoundTripsThroughMarkdownDocument() passed after 0.052 seconds.
+✔ Suite MarkdownVisualEditorTests passed after 5.291 seconds.
+✔ Test run with 48 tests in 8 suites passed after 5.291 seconds.
+◇ Test run started.
+↳ Testing Library Version: 2084
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite ReadingLibraryTests started.
+◇ Suite EPUBPackageTests started.
+◇ Test identitiesMatchByteForByteCopiesAndDetectChanges() started.
+◇ Test differentDevicesMergePositionAndIndependentAnnotationChanges() started.
+◇ Test webBookmarksMergeAcrossDevicesAndPropagateDeletes() started.
+◇ Test pdfReadingPositionPreservesPageAndCanvasCoordinates() started.
+◇ Test legacyAnnotationSidecarMigratesOnceWithoutEditingTheBook() started.
+◇ Test readingPositionJSONIsPortableAndClampsEPUBFraction() started.
+◇ Test markdownAnnotationNotesStayInCloudLibraryEvenWhenSourceIsUnavailable() started.
+◇ Test unpackedPackageIdentityIncludesRelativeNamesAndContent() started.
+◇ Test addsHeadingsFromSpineItemsMissingFromTheNavigationDocument() started.
+◇ Test usesEPUB2NCXForTheBooksActualTableOfContents() started.
+◇ Test rejectsResourcePathsEscapingExtractionRoot() started.
+◇ Test fallsBackToSpineWhenNavigationIsMissing() started.
+◇ Test rejectsInvalidArchive() started.
+◇ Test webBookmarksRejectNonWebURLs() started.
+◇ Test opensAllSpineChaptersAndResolvesNestedNavigation() started.
+◇ Test profileAndAnnotationsAreStoredPerDocumentAndRoundTrip() started.
+◇ Test opensUnpackedEPUBDirectoryWithoutChangingTheSource() started.
+◇ Test persistsAnnotationsInASidecarWithoutChangingTheEPUB() started.
+◇ Test bodyEditPreservesHeadAndExportsReadableEPUB() started.
+✔ Test pdfReadingPositionPreservesPageAndCanvasCoordinates() passed after 0.016 seconds.
+✔ Test readingPositionJSONIsPortableAndClampsEPUBFraction() passed after 0.017 seconds.
+✔ Test rejectsResourcePathsEscapingExtractionRoot() passed after 0.016 seconds.
+✔ Test addsHeadingsFromSpineItemsMissingFromTheNavigationDocument() passed after 0.017 seconds.
+✔ Test usesEPUB2NCXForTheBooksActualTableOfContents() passed after 0.016 seconds.
+✔ Test fallsBackToSpineWhenNavigationIsMissing() passed after 0.016 seconds.
+✔ Test webBookmarksRejectNonWebURLs() passed after 0.016 seconds.
+✔ Test rejectsInvalidArchive() passed after 0.017 seconds.
+✔ Test persistsAnnotationsInASidecarWithoutChangingTheEPUB() passed after 0.016 seconds.
+✔ Test markdownAnnotationNotesStayInCloudLibraryEvenWhenSourceIsUnavailable() passed after 0.017 seconds.
+✔ Test identitiesMatchByteForByteCopiesAndDetectChanges() passed after 0.019 seconds.
+✔ Test opensAllSpineChaptersAndResolvesNestedNavigation() passed after 0.021 seconds.
+✔ Test opensUnpackedEPUBDirectoryWithoutChangingTheSource() passed after 0.021 seconds.
+✔ Test unpackedPackageIdentityIncludesRelativeNamesAndContent() passed after 0.025 seconds.
+✔ Test bodyEditPreservesHeadAndExportsReadableEPUB() passed after 0.026 seconds.
+✔ Suite EPUBPackageTests passed after 0.026 seconds.
+✔ Test legacyAnnotationSidecarMigratesOnceWithoutEditingTheBook() passed after 0.030 seconds.
+✔ Test profileAndAnnotationsAreStoredPerDocumentAndRoundTrip() passed after 0.036 seconds.
+✔ Test webBookmarksMergeAcrossDevicesAndPropagateDeletes() passed after 0.040 seconds.
+✔ Test differentDevicesMergePositionAndIndependentAnnotationChanges() passed after 0.043 seconds.
+✔ Suite ReadingLibraryTests passed after 0.043 seconds.
+✔ Test run with 19 tests in 2 suites passed after 0.043 seconds.
