@@ -4,7 +4,7 @@ import SwiftUI
 /// One editor tab bound to one document session. Source and visual tabs for the
 /// same URL share `session`; unrelated documents never share text or position.
 struct WorkspaceMarkdownPane: View {
-    enum Mode { case source, visual }
+    enum Mode: Hashable { case source, visual }
 
     @ObservedObject var session: WorkspaceMarkdownSession
     let mode: Mode
@@ -64,10 +64,16 @@ struct WorkspaceMarkdownPane: View {
             if isActive { scheduleParse(text) }
         }
         .onChange(of: isActive) { _, active in
-            if active, parsedSource != session.text { scheduleParse(session.text, delayMilliseconds: 0) }
+            if active {
+                if parsedSource != session.text { scheduleParse(session.text, delayMilliseconds: 0) }
+                if mode == .source { focusRequest += 1 }
+            }
         }
         .task(id: session.url) {
-            if isActive { scheduleParse(session.text, delayMilliseconds: 0) }
+            if isActive {
+                scheduleParse(session.text, delayMilliseconds: 0)
+                if mode == .source { focusRequest += 1 }
+            }
         }
         .onDisappear { parseTask?.cancel() }
     }

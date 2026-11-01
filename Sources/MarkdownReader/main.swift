@@ -511,6 +511,9 @@ struct ReaderView: View {
     @State private var workspaceFolders: [URL] = []
     @State private var workspaceFiles: [URL] = []
     @State private var workspaceReadingNotes: [WorkspaceReadingNoteLink] = []
+    @State private var pendingWorkspaceFileDeletion: URL?
+    @State private var showWorkspaceFileDeletionConfirmation = false
+    @State private var workspaceFileTreeRevision = 0
     @State private var workspaceFileURL: URL?
     @State private var workspaceHasMissingReferences = false
     @State private var markdownFiles: [URL] = []
@@ -910,6 +913,15 @@ struct ReaderView: View {
         .alert("操作失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
             Button("好", role: .cancel) { saveError = nil }
         } message: { Text(saveError ?? "") }
+        .alert("将文件移到废纸篓？", isPresented: $showWorkspaceFileDeletionConfirmation) {
+            Button("移到废纸篓", role: .destructive) {
+                if let url = pendingWorkspaceFileDeletion { deleteWorkspaceFile(url) }
+                pendingWorkspaceFileDeletion = nil
+            }
+            Button("取消", role: .cancel) { pendingWorkspaceFileDeletion = nil }
+        } message: {
+            Text(workspaceFileDeletionMessage)
+        }
         .alert("需要安装 calibre", isPresented: $showCalibreInstallAlert) {
             Button("下载 calibre") {
                 NSWorkspace.shared.open(URL(string: "https://calibre-ebook.com/download_osx")!)
@@ -1197,7 +1209,10 @@ struct ReaderView: View {
                   LazyVStack(alignment: .leading, spacing: 3) {
                     ForEach(workspaceFolders.isEmpty ? (folderURL.map { [$0] } ?? []) : workspaceFolders, id: \.self) { folder in
                         WorkspaceFileTree(folder: folder, selected: selectedWorkspaceFile,
-                                          initiallyExpanded: true, remove: { removeWorkspaceFolder(folder) }, open: { open($0) })
+                                          initiallyExpanded: true, remove: { removeWorkspaceFolder(folder) },
+                                          delete: requestWorkspaceFileDeletion,
+                                          importFiles: importFilesIntoWorkspaceFolder, open: { open($0) })
+                            .id("\(folder.standardizedFileURL.path)#\(workspaceFileTreeRevision)")
                     }
                     ForEach(workspaceFiles, id: \.self) { file in
                         Button { open(file) } label: { Label(file.lastPathComponent, systemImage: "doc.text").lineLimit(1).frame(maxWidth: .infinity, alignment: .leading) }
@@ -2449,7 +2464,9 @@ struct ReaderView: View {
             if let url = tab.location {
                 let epubKey = url.standardizedFileURL.path
                 WorkspaceReadingPane(url: url,
-                    isActive: forceActive || workspaceTabs.groups.contains(where: { $0.selected == tab.id }),
+                    isActive: forceActive || workspaceTabs.groups.contains(where: {
+                        $0.id == workspaceTabs.activeGroup && $0.selected == tab.id
+                    }),
                     width: epubReaderWidth, bodySize: bodySize,
                     bodyFamily: bodyFamily, bodyColorHex: bodyColorHex,
                     annotationFontSize: annotationFontSize, annotationFontFamily: annotationFontFamily,
@@ -2475,7 +2492,9 @@ struct ReaderView: View {
             if let url = tab.location, let session = documentSessions.session(for: url) {
                 WorkspaceMarkdownPane(session: session,
                     mode: tab.kind == .source ? .source : .visual,
-                    isActive: forceActive || workspaceTabs.groups.contains(where: { $0.selected == tab.id }),
+                    isActive: forceActive || workspaceTabs.groups.contains(where: {
+                        $0.id == workspaceTabs.activeGroup && $0.selected == tab.id
+                    }),
                     appearance: tab.kind == .source ? sourceStyle : previewStyle,
                     syntaxHighlighting: sourceSyntaxHighlighting,
                     onActivate: activateWorkspaceMarkdownSession,
@@ -2499,13 +2518,31 @@ struct ReaderView: View {
     }
 
     private func activateWorkspaceMarkdownSession(_ session: WorkspaceMarkdownSession, mode: WorkspaceMarkdownPane.Mode) {
+        let needsOutlineRefresh = activeWorkspaceMarkdownURL?.standardizedFileURL != session.url.standardizedFileURL
+            || parsedSource != session.text
         activeWorkspaceMarkdownURL = session.url
         selectedFile = session.url
         source = session.text
         savedSource = session.savedText
         editorSelection = session.selection
         visualScrollState = session.position
+        sidebarOutlineTab = .markdown
+        if needsOutlineRefresh { refreshOutlineImmediately(for: session) }
         activateWorkspaceArea(mode == .source ? .markdownEditor : .markdownPreview)
+    }
+
+    private func refreshOutlineImmediately(for session: WorkspaceMarkdownSession) {
+        let url = session.url.standardizedFileURL
+        let text = session.text
+        Task { @MainActor in
+            let parsed = await Task.detached(priority: .userInitiated) { MarkdownBlock.parse(text) }.value
+            guard activeWorkspaceMarkdownURL?.standardizedFileURL == url,
+                  documentSessions.session(for: url)?.text == text else { return }
+            blocks = parsed
+            parsedSource = text
+            headings = parsed.filter { $0.headingLevel != nil }
+            expandedHeadings.formIntersection(Set(headings.map(\.id)))
+        }
     }
 
     private func activateWorkspaceReading(_ url: URL) {
@@ -3698,6 +3735,80 @@ struct ReaderView: View {
         lastFolderPath = folderURL?.path ?? ""
     }
 
+    private func importFilesIntoWorkspaceFolder(_ directory: URL) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.allowedContentTypes = WorkspaceFileEntry.supported.compactMap { UTType(filenameExtension: $0) }
+        panel.directoryURL = directory
+        guard panel.runModal() == .OK else { return }
+        do {
+            for source in panel.urls {
+                _ = try WorkspaceResourceImporter.copyVerified(source, into: directory)
+            }
+            workspaceFileTreeRevision += 1
+        } catch {
+            saveError = "导入文件失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func requestWorkspaceFileDeletion(_ url: URL) {
+        let canonical = url.standardizedFileURL
+        if workspaceFileURL?.standardizedFileURL == canonical {
+            saveError = "当前工程的 .mdworkspace 文件不能在工程打开期间删除。请先关闭工程。"
+            return
+        }
+        pendingWorkspaceFileDeletion = canonical
+        showWorkspaceFileDeletionConfirmation = true
+    }
+
+    private var workspaceFileDeletionMessage: String {
+        guard let url = pendingWorkspaceFileDeletion else { return "文件会移到废纸篓。" }
+        var details = ["“\(url.lastPathComponent)”会移到废纸篓。"]
+        if documentSessions.session(for: url)?.isDirty == true {
+            details.append("此文件有未保存的修改，删除后这些修改会丢失。")
+        }
+        if url.lastPathComponent == "主笔记.md" {
+            details.append("这是工程主页，删除后工程将失去主笔记入口。")
+        }
+        return details.joined(separator: "\n")
+    }
+
+    private func deleteWorkspaceFile(_ url: URL) {
+        let canonical = url.standardizedFileURL
+        do {
+            var resultingURL: NSURL?
+            try FileManager.default.trashItem(at: canonical, resultingItemURL: &resultingURL)
+        } catch {
+            saveError = "无法将文件移到废纸篓：\(error.localizedDescription)"
+            return
+        }
+
+        for tab in workspaceTabs.allTabs where tab.location?.standardizedFileURL == canonical {
+            workspaceTabs.remove(tab.id)
+        }
+        for tab in detachedWindows.allTabs where tab.location?.standardizedFileURL == canonical {
+            _ = detachedWindows.take(tab.id)
+        }
+        _ = documentSessions.removeMarkdown(canonical, discardingChanges: true)
+        workspaceFiles.removeAll { $0.standardizedFileURL == canonical }
+        workspaceReadingNotes.removeAll {
+            $0.readingURL.standardizedFileURL == canonical || $0.noteURL.standardizedFileURL == canonical
+        }
+        noteHistory.removeAll { $0.standardizedFileURL == canonical }
+        if selectedFile?.standardizedFileURL == canonical {
+            clearNoteDocument()
+            activeWorkspaceMarkdownURL = nil
+        }
+        let activeReading = (officeDocumentURL ?? pdfSourceURL ?? epubDocument?.sourceURL)?.standardizedFileURL
+        if activeReading == canonical { clearReadingSource() }
+        workspaceEPUBDocuments.removeValue(forKey: canonical.path)
+        workspaceEPUBChapters.removeValue(forKey: canonical.path)
+        workspaceEPUBNavigationTargets.removeValue(forKey: canonical.path)
+        workspaceFileTreeRevision += 1
+    }
+
     private func workspaceDocumentSnapshot() -> WorkspaceDocument {
         var layout = workspaceTabs
         for tab in detachedWindows.allTabs where !layout.allTabs.contains(where: { $0.id == tab.id }) {
@@ -4783,6 +4894,7 @@ struct ReaderView: View {
         savedSource = session.savedText
         selectedFile = document.url
         activeWorkspaceMarkdownURL = session.url
+        sidebarOutlineTab = .markdown
         visualScrollState.reset(for: document.url)
         visualScrollState.activeMode = isShowingSourceOnly ? .source : .visual
         if let position = notePositions[target.path] {
@@ -4807,7 +4919,7 @@ struct ReaderView: View {
         parsedSource = ""
         headings = []
         expandedHeadings = []
-        scheduleParse(for: source)
+        refreshOutlineImmediately(for: session)
         recordRecentWorkspace()
     }
 

@@ -27,6 +27,8 @@ struct WorkspaceFileTree: View {
     let folder: URL
     let selected: URL?
     let open: (URL) -> Void
+    let delete: ((URL) -> Void)?
+    let importFiles: ((URL) -> Void)?
     let initiallyExpanded: Bool
     let remove: (() -> Void)?
     @State private var expanded: Bool
@@ -34,9 +36,11 @@ struct WorkspaceFileTree: View {
     @State private var error: String?
     @State private var revision = 0
 
-    init(folder: URL, selected: URL?, initiallyExpanded: Bool = false, remove: (() -> Void)? = nil, open: @escaping (URL) -> Void) {
+    init(folder: URL, selected: URL?, initiallyExpanded: Bool = false, remove: (() -> Void)? = nil,
+         delete: ((URL) -> Void)? = nil, importFiles: ((URL) -> Void)? = nil,
+         open: @escaping (URL) -> Void) {
         self.folder = folder; self.selected = selected; self.initiallyExpanded = initiallyExpanded; self.open = open
-        self.remove = remove
+        self.remove = remove; self.delete = delete; self.importFiles = importFiles
         _expanded = State(initialValue: initiallyExpanded)
     }
 
@@ -55,6 +59,7 @@ struct WorkspaceFileTree: View {
             }.buttonStyle(.plain).help(folder.path)
                 .contextMenu {
                     Button("刷新目录") { refresh() }
+                    if let importFiles { Button("导入文件到此文件夹…") { importFiles(folder) } }
                     Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
                     if let remove { Button("从工作区移除文件夹", action: remove) }
                 }
@@ -62,7 +67,8 @@ struct WorkspaceFileTree: View {
                 if let error { Text(error).font(.caption2).foregroundStyle(.secondary).padding(.leading, 18) }
                 ForEach(items) { item in
                     if item.isDirectory {
-                        AnyView(WorkspaceFileTree(folder: item.url, selected: selected, open: open).padding(.leading, 14))
+                        AnyView(WorkspaceFileTree(folder: item.url, selected: selected, delete: delete,
+                                                  importFiles: importFiles, open: open).padding(.leading, 14))
                     } else {
                         Button { open(item.url) } label: {
                             HStack(spacing: 5) {
@@ -76,7 +82,13 @@ struct WorkspaceFileTree: View {
                         .background(selected?.standardizedFileURL == item.url.standardizedFileURL ? Color.accentColor.opacity(0.12) : .clear,
                                     in: RoundedRectangle(cornerRadius: 4))
                         .draggable(item.url)
-                        .contextMenu { Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) } }
+                        .contextMenu {
+                            Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+                            if let delete {
+                                Divider()
+                                Button("移到废纸篓…", role: .destructive) { delete(item.url) }
+                            }
+                        }
                     }
                 }
             }

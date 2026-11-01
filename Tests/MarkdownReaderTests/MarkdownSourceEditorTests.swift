@@ -601,6 +601,49 @@ import Testing
         #expect(editor.string == "old new!")
     }
 
+    @Test @MainActor func returnKeepsCaretFocusedAndAllowsImmediateTypingInLongDocument() async throws {
+        let original = String(repeating: "长文档正文用于检查回车后的插入点。\n", count: 2_100) + "最后一行"
+        var bindingText = original
+        var bindingSelection = NSRange(location: (original as NSString).length, length: 0)
+        let coordinator = MarkdownSourceEditor.Coordinator(
+            text: Binding(get: { bindingText }, set: { bindingText = $0 }),
+            selection: Binding(get: { bindingSelection }, set: { bindingSelection = $0 }),
+            headingStyles: HeadingStyle.defaults,
+            bodyColorHex: "#333333", strongColorHex: "#007766",
+            onSourceLineChange: { _ in }
+        )
+        let editor = MarkdownSourceTextView(frame: NSRect(x: 0, y: 0, width: 700, height: 420))
+        editor.isEditable = true
+        editor.isSelectable = true
+        editor.allowsUndo = true
+        editor.string = original
+        editor.delegate = coordinator
+        coordinator.textView = editor
+        coordinator.lastKnownText = original
+        let window = NSWindow(contentRect: editor.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = editor
+        window.makeKeyAndOrderFront(nil)
+        #expect(window.makeFirstResponder(editor))
+        editor.setSelectedRange(bindingSelection)
+
+        editor.insertNewline(nil)
+        await Task.yield()
+        let afterReturn = (editor.string as NSString).length
+        #expect(editor.string == original + "\n")
+        #expect(editor.selectedRange() == NSRange(location: afterReturn, length: 0))
+        #expect(bindingSelection == editor.selectedRange())
+        #expect(window.firstResponder === editor)
+
+        editor.insertText("继续输入", replacementRange: editor.selectedRange())
+        try? await Task.sleep(for: .milliseconds(800))
+        #expect(editor.string == original + "\n继续输入")
+        #expect(editor.selectedRange().location == (editor.string as NSString).length)
+        #expect(window.firstResponder === editor)
+        coordinator.flushPendingChanges()
+        #expect(bindingText == editor.string)
+        window.orderOut(nil)
+    }
+
     @Test @MainActor func longDocumentTypingDoesNotPublishWholeDocumentPerKeystroke() {
         let original = String(repeating: "一段较长的 Markdown 正文。\n", count: 12_000)
         var bindingText = original

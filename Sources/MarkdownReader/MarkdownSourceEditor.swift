@@ -164,7 +164,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         context.coordinator.positionState = positionState
         if context.coordinator.lastFocusRequest != focusRequest {
             context.coordinator.lastFocusRequest = focusRequest
-            DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
+            MarkdownSourcePositionHub.coordinator = context.coordinator
+            DispatchQueue.main.async {
+                MarkdownSourcePositionHub.coordinator = context.coordinator
+                textView.window?.makeFirstResponder(textView)
+            }
         }
         let textLength = textView.textStorage?.length ?? 0
         let coordinator = context.coordinator
@@ -229,6 +233,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         private var pendingHighlight: DispatchWorkItem?
         private var pendingHighlightRange: NSRange?
         private var pendingPublication: DispatchWorkItem?
+        private var pendingSelectionCapture: DispatchWorkItem?
         private var pendingLineReport: DispatchWorkItem?
         private(set) var hasPendingLocalChanges = false
         var syntaxHighlightingEnabled = true
@@ -263,6 +268,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             scrollObserver = nil
             pendingHighlight?.cancel()
             pendingPublication?.cancel()
+            pendingSelectionCapture?.cancel()
             pendingLineReport?.cancel()
         }
 
@@ -425,10 +431,27 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             // NSTextView can report the committed text before it reports the new
             // caret position. Publish both together so updateNSView cannot restore
             // the stale pre-composition selection over the IME's committed word.
+            // Mark the edit before publishing selection. Updating the binding can
+            // immediately redraw the SwiftUI representable; without this guard an
+            // old source snapshot can be written back between Return inserting the
+            // newline and AppKit advancing the insertion point.
+            hasPendingLocalChanges = true
             let selectionRange = textView.selectedRange()
             if syntaxHighlightingEnabled { scheduleSyntaxHighlighting(in: textView, around: selectionRange) }
             selection = selectionRange
-            hasPendingLocalChanges = true
+            // NSTextView may send textDidChange just before its final selection
+            // notification for Return and IME commits. Capture once more on the
+            // next run-loop turn so the binding stores the post-newline caret.
+            pendingSelectionCapture?.cancel()
+            let selectionWork = DispatchWorkItem { [weak self, weak textView] in
+                guard let self, let textView, !textView.hasMarkedText() else { return }
+                self.selection = textView.selectedRange()
+                if textView.window?.firstResponder === textView {
+                    textView.updateInsertionPointStateAndRestartTimer(true)
+                }
+            }
+            pendingSelectionCapture = selectionWork
+            DispatchQueue.main.async(execute: selectionWork)
             pendingPublication?.cancel()
             let work = DispatchWorkItem { [weak self] in self?.flushPendingChanges() }
             pendingPublication = work
@@ -512,6 +535,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
                 targetRange = NSRange(location: 0, length: source.length)
             }
             guard targetRange.length > 0 else { return }
+            let selectionBeforeHighlight = textView.selectedRange()
+            let wasFirstResponder = textView.window?.firstResponder === textView
             let previousFenceState: Bool
             if targetRange.location > 0,
                let cached = storage.attribute(Self.fenceStateKey, at: targetRange.location - 1, effectiveRange: nil) as? NSNumber {
@@ -616,6 +641,17 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
             storage.endEditing()
             textView.undoManager?.enableUndoRegistration()
+            let textLength = storage.length
+            let safeLocation = min(selectionBeforeHighlight.location, textLength)
+            let safeLength = min(selectionBeforeHighlight.length, textLength - safeLocation)
+            let safeSelection = NSRange(location: safeLocation, length: safeLength)
+            if textView.selectedRange() != safeSelection {
+                textView.setSelectedRange(safeSelection)
+            }
+            if wasFirstResponder {
+                textView.window?.makeFirstResponder(textView)
+                textView.updateInsertionPointStateAndRestartTimer(true)
+            }
         }
 
         private func forEachMatch(_ pattern: String, in source: NSString, body: (NSRange, NSTextCheckingResult) -> Void) {
