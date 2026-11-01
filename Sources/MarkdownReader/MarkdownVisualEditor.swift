@@ -113,6 +113,11 @@ enum MarkdownVisualCommandHub {
     static var flushActiveEdits: ((@escaping @MainActor () -> Void) -> Void)?
 
     static func commitActiveEdits(completion: @escaping @MainActor () -> Void) {
+        if let view = MarkdownSourcePositionHub.coordinator?.textView, view.hasMarkedText() {
+            // Resigning commits the input method before the source view can be
+            // moved or removed; otherwise its provisional text is not in the binding.
+            view.window?.makeFirstResponder(nil)
+        }
         let finish: @MainActor () -> Void = {
             MarkdownSourcePositionHub.flushPendingChanges()
             completion()
@@ -157,6 +162,9 @@ struct MarkdownVisualEditor: NSViewRepresentable {
     let onSourceLineChange: (Int) -> Void
     let onActivate: () -> Void
     let onImagePaste: (NSPasteboard) -> String?
+    var onMarkdownLink: (URL) -> Void = { _ in }
+    var onSlashCommand: (String, String?) -> Void = { _, _ in }
+    var onDeleteManagedNote: (URL) -> Void = { _ in }
 
     static let contentWorld = WKContentWorld.world(name: "MarkdownStudioVisualEditor")
 
@@ -176,7 +184,17 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         configuration.userContentController.addUserScript(WKUserScript(source: Self.editorScript,
             injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: Self.contentWorld))
         let webView = VisualEditorWebView(frame: .zero, configuration: configuration)
-        webView.onActivate = { scrollState.activeMode = .visual; onActivate() }
+        webView.onActivate = { [weak coordinator = context.coordinator, weak webView] in
+            if let coordinator, let webView {
+                MarkdownVisualCommandHub.activeWebView = webView
+                MarkdownVisualCommandHub.flushActiveEdits = { [weak coordinator, weak webView] completion in
+                    guard let coordinator, let webView else { completion(); return }
+                    coordinator.flushPendingEdits(in: webView, completion: completion)
+                }
+            }
+            scrollState.activeMode = .visual
+            onActivate()
+        }
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         MarkdownVisualCommandHub.flushActiveEdits = { [weak coordinator = context.coordinator, weak webView] completion in
@@ -194,10 +212,23 @@ struct MarkdownVisualEditor: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        (webView as? VisualEditorWebView)?.onActivate = { scrollState.activeMode = .visual; onActivate() }
+        (webView as? VisualEditorWebView)?.onActivate = { [weak coordinator = context.coordinator, weak webView] in
+            if let coordinator, let webView {
+                MarkdownVisualCommandHub.activeWebView = webView
+                MarkdownVisualCommandHub.flushActiveEdits = { [weak coordinator, weak webView] completion in
+                    guard let coordinator, let webView else { completion(); return }
+                    coordinator.flushPendingEdits(in: webView, completion: completion)
+                }
+            }
+            scrollState.activeMode = .visual
+            onActivate()
+        }
         let coordinator = context.coordinator
         coordinator.onActivate = onActivate
         coordinator.onImagePaste = onImagePaste
+        coordinator.onMarkdownLink = onMarkdownLink
+        coordinator.onSlashCommand = onSlashCommand
+        coordinator.onDeleteManagedNote = onDeleteManagedNote
         coordinator.onSourceLineChange = onSourceLineChange
         coordinator.scrollState = scrollState
         let path = baseURL?.standardizedFileURL.path ?? ""
@@ -275,6 +306,9 @@ struct MarkdownVisualEditor: NSViewRepresentable {
             content = "<div data-visual-index=\"0\" contenteditable=\"true\"><p><br></p></div>"
         } else {
             content = renderedBlocks.enumerated().map { index, block in
+                if let embedded = embeddedNoteHTML(document.segments[index]) {
+                    return "<div data-visual-index=\"\(index)\" contenteditable=\"false\" data-source-line=\"\(block.sourceLine)\">\(embedded)</div>"
+                }
                 let editable = document.editable[index] ? "true" : "false"
                 let title = document.editable[index] ? "" : " title=\"此区块请在 Markdown 源码模式编辑\""
                 return block.html.replacingOccurrences(of: "<div data-source-line=",
@@ -283,16 +317,61 @@ struct MarkdownVisualEditor: NSViewRepresentable {
             }.joined(separator: "\n")
         }
         let originalContent = renderedBlocks.map(\.html).joined(separator: "\n")
+        let parentPath = scrollState.documentPath
+        let childURL = MarkdownNoteHierarchy.childrenDirectory(of: URL(fileURLWithPath: parentPath))
+        // WebKit resolves file links through filesystem symlinks (for example,
+        // /tmp becomes /private/tmp). Compare against the same physical path.
+        let directory: String
+        if parentPath.isEmpty {
+            directory = ""
+        } else if let resolved = realpath(childURL.path, nil) {
+            defer { free(resolved) }
+            directory = URL(fileURLWithPath: String(cString: resolved), isDirectory: true).absoluteString
+        } else {
+            directory = childURL.absoluteString
+        }
+        let originalDirectory = parentPath.isEmpty ? "" : childURL.absoluteString
+        let safeDirectory = originalDirectory.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
+        let safeRealDirectory = directory.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
         return preview.pageHTML
-            .replacingOccurrences(of: "<main>\(originalContent)</main>", with: "<main>\(content)</main>")
+            .replacingOccurrences(of: "<main>\(originalContent)</main>", with: "<main data-note-children=\"\(safeDirectory)\" data-note-children-real=\"\(safeRealDirectory)\">\(content)</main>")
             .replacingOccurrences(of: "</style>", with: """
                 html{scroll-behavior:auto}
                 [data-visual-index][contenteditable=true]{min-height:1.2em;outline:none;cursor:text;caret-color:rgba(55,65,75,.78)}
+                [data-visual-index][contenteditable=true] :is(h1,h2,h3,h4,h5,h6):empty{min-height:1em}
                 [data-visual-index][contenteditable=true]:focus{background:rgba(80,125,170,.045);border-radius:4px}
                 [data-visual-index][contenteditable=false]{cursor:default}
+                a[href$=".md"]::before,a[href$=".markdown"]::before{content:"📄 ";font-size:.9em;text-decoration:none}
+                .embedded-note{border:1px solid #ddd;border-radius:6px;padding:10px 14px;margin:8px 0}.embedded-note summary{cursor:pointer;font-weight:600}.embedded-note > a{font-size:.85em}
+                #mdstudio-slash{position:fixed;z-index:10000;min-width:210px;max-height:260px;overflow:auto;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 18px #0002;padding:5px;font:13px -apple-system,sans-serif}
+                #mdstudio-slash button{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:4px;padding:6px 9px;color:#333}
+                #mdstudio-slash button.selected{background:#eef1f4}
                 ::selection{background:rgba(65,130,200,.25)}
                 </style>
                 """)
+    }
+
+    private func embeddedNoteHTML(_ segment: String) -> String? {
+        let expression = #"^\[([^\]\n]+)\]\(([^\s]+) [\"']mdstudio-embed[\"']\)$"#
+        let text = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let regex = try? NSRegularExpression(pattern: expression),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let titleRange = Range(match.range(at: 1), in: text),
+              let pathRange = Range(match.range(at: 2), in: text),
+              let baseURL else { return nil }
+        let relative = String(text[pathRange]).removingPercentEncoding ?? String(text[pathRange])
+        guard !relative.hasPrefix("/"), !relative.contains(":") else { return nil }
+        let file = baseURL.appendingPathComponent(relative).standardizedFileURL
+        guard ["md", "markdown"].contains(file.pathExtension.lowercased()),
+              let data = try? Data(contentsOf: file), data.count <= 2_000_000,
+              let content = String(data: data, encoding: .utf8) else { return nil }
+        func escape(_ value: String) -> String {
+            value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+        }
+        let rendered = MarkdownBlock.parse(content).map(\.html).joined(separator: "\n")
+            .replacingOccurrences(of: #" data-source-line="[0-9]+""#, with: "", options: .regularExpression)
+        return "<details class=\"embedded-note\"><summary>📄 \(escape(String(text[titleRange])))</summary><a href=\"\(escape(String(text[pathRange])))\">打开子笔记编辑</a><div>\(rendered)</div></details>"
     }
 
     @MainActor
@@ -300,6 +379,9 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         @Binding var source: String
         var onActivate: () -> Void
         var onImagePaste: (NSPasteboard) -> String?
+        var onMarkdownLink: (URL) -> Void = { _ in }
+        var onSlashCommand: (String, String?) -> Void = { _, _ in }
+        var onDeleteManagedNote: (URL) -> Void = { _ in }
         weak var webView: WKWebView?
         var document = MarkdownVisualDocument(source: "", blocks: [])
         var lastLoadedSource: String?
@@ -490,6 +572,21 @@ struct MarkdownVisualEditor: NSViewRepresentable {
                 if let id = payload["id"] as? String, let completion = pendingFlushCompletions.removeValue(forKey: id) { completion() }
                 return
             }
+            if payload["kind"] as? String == "openMarkdownLink",
+               let href = payload["href"] as? String, let url = URL(string: href), url.isFileURL,
+               ["md", "markdown"].contains(url.pathExtension.lowercased()) {
+                onMarkdownLink(url)
+                return
+            }
+            if payload["kind"] as? String == "slashCommand", let command = payload["command"] as? String {
+                onSlashCommand(command, payload["token"] as? String)
+                return
+            }
+            if payload["kind"] as? String == "deleteManagedNote", let href = payload["href"] as? String,
+               let url = URL(string: href), url.isFileURL {
+                onDeleteManagedNote(url)
+                return
+            }
             if payload["kind"] as? String == "pasteImage" {
                 if let markdown = onImagePaste(.general) {
                     MarkdownVisualCommandHub.activeWebView = webView
@@ -536,7 +633,9 @@ struct MarkdownVisualEditor: NSViewRepresentable {
                      decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
             guard navigationAction.navigationType == .linkActivated,
                   let url = navigationAction.request.url else { decisionHandler(.allow); return }
-            if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+            if url.isFileURL && ["md", "markdown"].contains(url.pathExtension.lowercased()) {
+                onMarkdownLink(url)
+            } else if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
                 NSWorkspace.shared.open(url)
             }
             decisionHandler(.cancel)
@@ -552,6 +651,25 @@ struct MarkdownVisualEditor: NSViewRepresentable {
       const dirty = new Set();
       const pending = new Map();
       const revisions = new Map();
+      const childDirectory = root.dataset.noteChildren || '';
+      const childRealDirectory = root.dataset.noteChildrenReal || childDirectory;
+      for (const link of root.querySelectorAll('a[href]')) {
+        let directChild = false;
+        try {
+          const target = new URL(link.href), directory = new URL('.', target);
+          directChild = target.protocol === 'file:' && (directory.href === childDirectory || directory.href === childRealDirectory) && /\.(md|markdown)$/i.test(target.pathname);
+        } catch (_) {}
+        if (directChild || (!childDirectory && link.getAttribute('title') === 'mdstudio-page')) {
+          link.contentEditable = 'false'; link.classList.add('managed-note');
+        }
+      }
+      const managedSnapshots = new Map();
+      for (const element of root.querySelectorAll('[data-visual-index]')) {
+        const links = [...element.querySelectorAll('a.managed-note')];
+        if (links.length) managedSnapshots.set(Number(element.dataset.visualIndex), {
+          html:element.innerHTML, links:links.map(link => ({href:link.href, text:link.textContent, title:link.getAttribute('title')}))
+        });
+      }
       const escapeText = text => text.replace(/\\/g, '\\\\').replace(/([*_\[\]`])/g, '\\$1');
       function textValue(node, end) {
         let value = (node.nodeValue || '').slice(0, end);
@@ -601,7 +719,7 @@ struct MarkdownVisualEditor: NSViewRepresentable {
           } else inner = wrap(inner, '**');
         }
         if (tag === 'code') return '`' + (node.textContent || '').replace(/`/g, '\\`') + '`';
-        if (tag === 'a') return '[' + inner + '](' + (node.getAttribute('href') || '') + ')';
+        if (tag === 'a') return '[' + inner + '](' + (node.getAttribute('href') || '') + (node.getAttribute('title') === 'mdstudio-page' ? ' "mdstudio-page"' : '') + ')';
         return inner;
       }
       function list(node, depth) {
@@ -672,6 +790,28 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         if (!element || composing || element.contentEditable !== 'true') return;
         const index = Number(element.dataset.visualIndex);
         if (!dirty.has(index)) return;
+        const snapshot = managedSnapshots.get(index);
+        if (snapshot) {
+          const current = [...element.querySelectorAll('a[href]')];
+          const matched = new Set();
+          const missing = snapshot.links.find(saved => {
+            const index = current.findIndex((link, i) => !matched.has(i) && link.href === saved.href && link.textContent === saved.text);
+            if (index < 0) return true;
+            matched.add(index); return false;
+          });
+          if (missing) {
+            element.innerHTML = snapshot.html;
+            element.querySelectorAll('a.managed-note').forEach(link => { link.contentEditable = 'false'; });
+            dirty.delete(index);
+            bridge.postMessage({kind:'deleteManagedNote', href:missing.href});
+            return;
+          }
+          for (const saved of snapshot.links) {
+            const link = current.find(item => item.href === saved.href && item.textContent === saved.text);
+            if (link) { link.classList.add('managed-note'); link.contentEditable = 'false'; if (saved.title === 'mdstudio-page') link.title = saved.title; }
+          }
+          snapshot.html = element.innerHTML;
+        }
         const markdown = flow(element.childNodes);
         dirty.delete(index);
         const revision = (revisions.get(index) || 0) + 1;
@@ -680,18 +820,129 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         pending.set(index, edit);
         bridge.postMessage(edit);
       }
+      function managedLinkForSelection(backwards) {
+        const selection = getSelection(); if (!selection?.rangeCount) return null;
+        const range = selection.getRangeAt(0), links = [...root.querySelectorAll('a.managed-note')];
+        const parent = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
+        let hit = parent?.closest?.('a.managed-note');
+        if (!hit && !range.collapsed) hit = links.find(link => range.intersectsNode(link));
+        if (!hit && range.collapsed) {
+          const node = range.startContainer, offset = range.startOffset; let adjacent = null;
+          if (node.nodeType === Node.TEXT_NODE) {
+            if (backwards && offset === 0) adjacent = node.previousSibling;
+            if (!backwards && offset === node.length) adjacent = node.nextSibling;
+          } else if (node.nodeType === Node.ELEMENT_NODE) adjacent = node.childNodes[backwards ? offset - 1 : offset];
+          if (adjacent?.nodeType === Node.ELEMENT_NODE) hit = adjacent.matches('a.managed-note') ? adjacent : adjacent.querySelector?.('a.managed-note');
+        }
+        return hit || null;
+      }
+      root.addEventListener('keydown', event => {
+        if (composing || event.isComposing || !['Backspace','Delete'].includes(event.key)) return;
+        const hit = managedLinkForSelection(event.key === 'Backspace');
+        if (!hit) return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        bridge.postMessage({kind:'deleteManagedNote', href:hit.href});
+      });
+      root.addEventListener('beforeinput', event => {
+        if (!event.inputType?.startsWith('delete') && !event.inputType?.startsWith('insert')) return;
+        const hit = managedLinkForSelection(event.inputType.includes('Backward'));
+        if (!hit) return;
+        event.preventDefault();
+        bridge.postMessage({kind:'deleteManagedNote', href:hit.href});
+      });
+      root.addEventListener('click', event => {
+        const link = event.target.closest?.('a[href]');
+        if (!link) return;
+        try {
+          const url = new URL(link.href);
+          if (url.protocol === 'file:' && /\.(md|markdown)$/i.test(url.pathname)) {
+            event.preventDefault();
+            bridge.postMessage({kind:'openMarkdownLink', href:url.href});
+          }
+        } catch (_) {}
+      });
       root.addEventListener('compositionstart', () => { composing = true; });
       root.addEventListener('focusin', () => bridge.postMessage({kind:'activate'}));
+      const slashCommands = [
+        ['page','新建子笔记','page 子笔记 页面'], ['text','段落','text plain 段落'],
+        ['h1','一级标题','h1 标题1'], ['h2','二级标题','h2 标题2'], ['h3','三级标题','h3 标题3'],
+        ['h4','四级标题','h4 标题4'], ['h5','五级标题','h5 标题5'], ['h6','六级标题','h6 标题6'],
+        ['bullet','无序列表','bullet list 无序'], ['num','有序列表','num numbered 有序'],
+        ['todo','任务列表','todo task 任务'], ['quote','引用','quote 引用'], ['div','分隔线','div divider 分隔线'],
+        ['table','表格','table 表格'], ['image','图片','image 图片'], ['link','插入已有笔记链接','link 链接'],
+        ['bold','加粗','bold 加粗'], ['italic','斜体','italic 斜体'], ['underline','下划线','underline 下划线'],
+        ['strike','删除线','strike 删除线'], ['code','行内代码','code 代码']
+      ];
+      let slashMenu = null, slashRange = null, slashItems = [], slashIndex = 0;
+      function closeSlash() { slashMenu?.remove(); slashMenu = null; slashRange = null; slashItems = []; slashIndex = 0; }
+      function chooseSlash(index) {
+        const item = slashItems[index]; const range = slashRange;
+        if (!item || !range || !range.startContainer.isConnected) { closeSlash(); return; }
+        const block = range.startContainer.parentElement?.closest('[data-visual-index][contenteditable=true]');
+        range.deleteContents();
+        let token = null;
+        if (item[0] === 'page') {
+          token = '\uE000mdstudio-page-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '\uE001';
+          const marker = document.createTextNode(token); range.insertNode(marker); range.setStartAfter(marker); range.collapse(true);
+        }
+        const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+        closeSlash();
+        const direct = {text:'paragraph', bullet:'unordered', num:'ordered', todo:'task', quote:'quote',
+          div:'rule', bold:'bold', italic:'italic', underline:'underline', strike:'strikeThrough', code:'code'};
+        if (/^h[1-6]$/.test(item[0])) {
+          window.markdownStudioCommand('heading', item[0].slice(1));
+          return;
+        }
+        if (direct[item[0]]) {
+          window.markdownStudioCommand(direct[item[0]], '');
+          return;
+        }
+        if (block) { dirty.add(Number(block.dataset.visualIndex)); publish(block); }
+        bridge.postMessage({kind:'slashCommand', command:item[0], token});
+      }
+      function updateSlash() {
+        if (composing) { closeSlash(); return; }
+        const selection = getSelection(), node = selection?.anchorNode;
+        if (!selection?.isCollapsed || node?.nodeType !== Node.TEXT_NODE || !node.parentElement?.closest('[contenteditable=true]') || node.parentElement?.closest('pre,code,a')) { closeSlash(); return; }
+        const offset = selection.anchorOffset, text = (node.nodeValue || '').slice(0, offset);
+        const match = /(?:^|\s)\/([a-z0-9#\u4e00-\u9fff]*)$/i.exec(text);
+        if (!match) { closeSlash(); return; }
+        const query = match[1].toLowerCase();
+        slashItems = slashCommands.filter(item => item[2].toLowerCase().includes(query));
+        if (!slashItems.length) { closeSlash(); return; }
+        slashIndex = Math.min(slashIndex, slashItems.length - 1);
+        slashRange = document.createRange(); slashRange.setStart(node, offset - query.length - 1); slashRange.setEnd(node, offset);
+        if (!slashMenu) { slashMenu = document.createElement('div'); slashMenu.id = 'mdstudio-slash'; document.body.appendChild(slashMenu); }
+        slashMenu.replaceChildren();
+        slashItems.forEach((item, index) => {
+          const button = document.createElement('button'); button.type = 'button'; button.textContent = item[1] + '  /' + item[0];
+          if (index === slashIndex) button.className = 'selected';
+          button.addEventListener('mousedown', event => { event.preventDefault(); chooseSlash(index); });
+          slashMenu.appendChild(button);
+        });
+        const rect = slashRange.getBoundingClientRect();
+        slashMenu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 230)) + 'px';
+        slashMenu.style.top = Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 280)) + 'px';
+      }
+      root.addEventListener('keydown', event => {
+        if (!slashMenu || composing || event.isComposing) return;
+        if (event.key === 'Escape') { event.preventDefault(); closeSlash(); }
+        else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault(); slashIndex = (slashIndex + (event.key === 'ArrowDown' ? 1 : -1) + slashItems.length) % slashItems.length; updateSlash();
+        } else if (event.key === 'Enter') { event.preventDefault(); chooseSlash(slashIndex); }
+      });
       root.addEventListener('compositionend', event => {
         composing = false; const block = event.target.closest('[data-visual-index]');
         if (block) dirty.add(Number(block.dataset.visualIndex));
         publish(block);
+        updateSlash();
       });
       root.addEventListener('input', event => {
         if (composing) return;
         const block = event.target.closest('[data-visual-index]');
         if (block) dirty.add(Number(block.dataset.visualIndex));
         publish(block);
+        updateSlash();
       });
       root.addEventListener('paste', event => {
         if ([...(event.clipboardData?.items || [])].some(item => item.type.startsWith('image/'))) {
@@ -809,6 +1060,7 @@ struct MarkdownVisualEditor: NSViewRepresentable {
       // composition boundary intact before the host switches panes.
       window.markdownStudioFlush = id => {
         const snapshot = () => {
+          for (const index of [...dirty]) publish(root.querySelector('[data-visual-index="' + index + '"]'));
           const anchors=[...document.querySelectorAll('[data-source-line]')];
           let visible=anchors[0];
           for (const item of anchors) { if (item.getBoundingClientRect().top<=40) visible=item; else break; }
@@ -903,9 +1155,32 @@ struct MarkdownVisualEditor: NSViewRepresentable {
           if (li && !li.querySelector('input[type=checkbox]')) li.insertAdjacentHTML('afterbegin', '<input type="checkbox"> ');
         }
         else return false;
+        if (['unordered','ordered','task'].includes(name)) {
+          const point = selection?.anchorNode;
+          const parent = point?.nodeType === Node.ELEMENT_NODE ? point : point?.parentElement;
+          const item = parent?.closest?.('li') || blockElement.querySelector('li:last-child');
+          if (item && !item.textContent.trim()) {
+            const caret = document.createRange();
+            const placeholder = item.querySelector('br');
+            if (placeholder) caret.setStartBefore(placeholder); else { caret.selectNodeContents(item); caret.collapse(false); }
+            caret.collapse(true);
+            selection.removeAllRanges(); selection.addRange(caret);
+          }
+        }
         const affected = [...root.querySelectorAll('[data-visual-index][contenteditable=true]')]
           .filter(element => element === blockElement || selection?.containsNode(element, true));
-        for (const element of affected) { dirty.add(Number(element.dataset.visualIndex)); publish(element); }
+        for (const element of affected) {
+          dirty.add(Number(element.dataset.visualIndex));
+          const anchor = selection?.anchorNode;
+          const anchorElement = anchor?.nodeType === Node.ELEMENT_NODE ? anchor : anchor?.parentElement;
+          const heading = anchorElement?.closest?.('h1,h2,h3,h4,h5,h6');
+          // Keep an empty heading in WebKit until the first keystroke: rebuilding
+          // an empty Markdown heading can otherwise remove the insertion caret.
+          if (name === 'heading' && heading && !heading.textContent.trim()) continue;
+          const item = anchorElement?.closest?.('li');
+          if (['unordered','ordered','task'].includes(name) && item && !item.textContent.trim()) continue;
+          publish(element);
+        }
         return true;
       };
     })();

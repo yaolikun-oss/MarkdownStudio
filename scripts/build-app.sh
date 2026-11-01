@@ -50,6 +50,12 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
+            <key>CFBundleTypeName</key><string>Markdown Studio Workspace</string>
+            <key>CFBundleTypeRole</key><string>Editor</string>
+            <key>LSHandlerRank</key><string>Owner</string>
+            <key>LSItemContentTypes</key><array><string>local.markdownstudio.workspace</string></array>
+        </dict>
+        <dict>
             <key>CFBundleTypeName</key><string>Markdown Document</string>
             <key>CFBundleTypeRole</key><string>Viewer</string>
             <key>LSHandlerRank</key><string>Default</string>
@@ -88,6 +94,15 @@ cat > "$APP_PATH/Contents/Info.plist" <<'PLIST'
                 <string>com.apple.iwork.pages.pages</string>
                 <string>com.apple.iwork.pages.sffpages</string>
             </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key><string>local.markdownstudio.workspace</string>
+            <key>UTTypeDescription</key><string>Markdown Studio Workspace</string>
+            <key>UTTypeConformsTo</key><array><string>public.json</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>mdworkspace</string></array></dict>
         </dict>
     </array>
     <key>UTImportedTypeDeclarations</key>

@@ -71,7 +71,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         context.coordinator.isRestoringPosition = true
         let container = MarkdownSourceEditorContainer()
         let textView = MarkdownSourceTextView(frame: .zero)
-        textView.onActivate = { positionState?.activeMode = .source; onActivate() }
+        textView.onActivate = { [weak coordinator = context.coordinator] in
+            if let coordinator { MarkdownSourcePositionHub.coordinator = coordinator }
+            positionState?.activeMode = .source
+            onActivate()
+        }
         textView.onTablePaste = { [weak coordinator = context.coordinator] table, textView in
             coordinator?.pasteTable(table, into: textView)
         }
@@ -129,7 +133,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         let scrollView = container.scrollView
         guard let textView = context.coordinator.textView else { return }
         textView.insertionPointColor = NSColor(calibratedWhite: 0.34, alpha: 0.82)
-        (textView as? MarkdownSourceTextView)?.onActivate = { positionState?.activeMode = .source; onActivate() }
+        (textView as? MarkdownSourceTextView)?.onActivate = { [weak coordinator = context.coordinator] in
+            if let coordinator { MarkdownSourcePositionHub.coordinator = coordinator }
+            positionState?.activeMode = .source
+            onActivate()
+        }
         (textView as? MarkdownSourceTextView)?.onImagePaste = onImagePaste
         // SwiftUI can redraw the representable while an input method is composing.
         // Replacing NSTextView's string or selection here discards the marked text,

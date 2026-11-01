@@ -11,6 +11,8 @@ private final class VisualEditMessageProbe: NSObject, WKScriptMessageHandler {
     private var pendingFlush: CheckedContinuation<String, Never>?
     private var receivedFlush: String?
     private(set) var receivedFlushLine: Int?
+    private(set) var deletionHref: String?
+    private(set) var slashPageToken: String?
 
     func waitForMarkdown() async -> String {
         if let receivedMarkdown { return receivedMarkdown }
@@ -24,6 +26,15 @@ private final class VisualEditMessageProbe: NSObject, WKScriptMessageHandler {
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if let payload = message.body as? [String: Any], payload["kind"] as? String == "slashCommand",
+           payload["command"] as? String == "page" {
+            slashPageToken = payload["token"] as? String
+            return
+        }
+        if let payload = message.body as? [String: Any], payload["kind"] as? String == "deleteManagedNote" {
+            deletionHref = payload["href"] as? String
+            return
+        }
         guard let payload = message.body as? [String: Any],
               let markdown = payload["markdown"] as? String else {
             if let payload = message.body as? [String: Any], payload["kind"] as? String == "flush",
@@ -53,6 +64,125 @@ private final class VisualEditLoadProbe: NSObject, WKNavigationDelegate {
 }
 
 @Suite(.serialized) struct MarkdownVisualEditorTests {
+    @Test @MainActor func ownedPageTokenIsAtomicAndInterceptsDeletion() async throws {
+        let (view, _) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><p>前<a title=\"mdstudio-page\" href=\"file:///tmp/child.md\">测试笔记</a>后</p></div>")
+        let result = try await evaluateInEditorWorld("""
+            (() => {
+              const link = document.querySelector('a'); const block = document.querySelector('[data-visual-index]');
+              const range = document.createRange(); range.selectNode(link); const s=getSelection(); s.removeAllRanges(); s.addRange(range);
+              const event = new InputEvent('beforeinput', {inputType:'deleteContentBackward', bubbles:true, cancelable:true});
+              block.dispatchEvent(event); return link.contentEditable + '|' + event.defaultPrevented + '|' + link.textContent;
+            })()
+            """, in: view)
+        #expect(result == "false|true|测试笔记")
+    }
+
+    @Test @MainActor func legacyDirectChildIsAtomicButOtherLinksRemainEditable() async throws {
+        let html = """
+        <!doctype html><html><body><main data-note-children="file:///tmp/parent.md.notes/">
+        <div data-visual-index="0" contenteditable="true"><p>
+        <a id="child" href="file:///tmp/parent.md.notes/child.md">旧子笔记</a>
+        <a id="other" href="file:///tmp/other.md">普通链接</a></p></div></main></body></html>
+        """
+        let (view, _) = await loadedEditorHTML(html, fullPage: true)
+        let result = try await evaluateInEditorWorld("document.querySelector('#child').contentEditable + '|' + document.querySelector('#other').contentEditable", in: view)
+        #expect(result == "false|inherit")
+    }
+
+    @Test @MainActor func webKitDeletingOwnedPageWithoutBeforeInputRestoresBlockUntilFileDeletion() async throws {
+        let (view, probe) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><p>前<a title=\"mdstudio-page\" href=\"file:///tmp/child.md\">测试笔记</a>后</p></div>")
+        let result = try await evaluateInEditorWorld("""
+            (() => { const block=document.querySelector('[data-visual-index]');
+              block.querySelector('a').remove(); block.dispatchEvent(new Event('input',{bubbles:true}));
+              return block.querySelector('a')?.textContent + '|' + block.textContent; })()
+            """, in: view)
+        #expect(result == "测试笔记|前测试笔记后")
+        for _ in 0..<50 where probe.deletionHref == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(probe.deletionHref == "file:///tmp/child.md")
+    }
+
+    @Test @MainActor func slashMenuFiltersAndRemovesOnlyCommand() async throws {
+        let (view, _) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><p>正文 /h2</p></div>")
+        let result = try await evaluateInEditorWorld("""
+            (() => {
+              const block = document.querySelector('[data-visual-index]');
+              const text = block.querySelector('p').firstChild;
+              block.focus(); const range = document.createRange(); range.setStart(text, text.length); range.collapse(true);
+              getSelection().removeAllRanges(); getSelection().addRange(range);
+              block.dispatchEvent(new Event('input', {bubbles:true}));
+              const menu = document.querySelector('#mdstudio-slash');
+              const label = menu?.textContent || '';
+              block.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true, cancelable:true}));
+              return label + '|' + block.textContent + '|' + !!document.querySelector('#mdstudio-slash');
+            })()
+            """, in: view)
+        #expect(result.contains("二级标题"))
+        #expect(result.contains("|正文 |false"))
+    }
+
+    @Test @MainActor func slashHeadingKeepsTypingInsideHeading() async throws {
+        let (view, _) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><p>/h1</p></div>")
+        let result = try await evaluateInEditorWorld("""
+            (() => {
+              const block = document.querySelector('[data-visual-index]');
+              const text = block.querySelector('p').firstChild;
+              block.focus(); const range = document.createRange(); range.setStart(text,text.length); range.collapse(true);
+              getSelection().removeAllRanges(); getSelection().addRange(range);
+              block.dispatchEvent(new Event('input',{bubbles:true}));
+              block.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+              document.execCommand('insertText',false,'标题内容');
+              return block.querySelector('h1')?.textContent || '';
+            })()
+            """, in: view)
+        #expect(result == "标题内容")
+    }
+
+    @Test @MainActor func slashBlockCommandsKeepInsertionPointForTyping() async throws {
+        for (command, selector) in [("h2", "h2"), ("h3", "h3"), ("h4", "h4"),
+                                    ("h5", "h5"), ("h6", "h6"), ("bullet", "li"),
+                                    ("num", "li"), ("quote", "blockquote")] {
+            let (view, _) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><p>/\(command)</p></div>")
+            let script = """
+                (() => {
+                  const block=document.querySelector('[data-visual-index]'), text=block.querySelector('p').firstChild;
+                  block.focus(); const range=document.createRange(); range.setStart(text,text.length); range.collapse(true);
+                  getSelection().removeAllRanges(); getSelection().addRange(range);
+                  block.dispatchEvent(new Event('input',{bubbles:true}));
+                  block.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+                  document.execCommand('insertText',false,'测试');
+                  return block.querySelector('\(selector)')?.textContent || '';
+                })()
+                """
+            let result = try await evaluateInEditorWorld(script, in: view)
+            #expect(result.contains("测试"), "\(command) should keep the caret in the new block")
+        }
+    }
+
+    @Test @MainActor func slashPageLeavesPreciseInsertionMarkerAfterHeading() async throws {
+        let (view, probe) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><h2>标题</h2><div>/page</div></div>")
+        let result = try await evaluateInEditorWorld("""
+            (() => { const block=document.querySelector('[data-visual-index]'), text=block.querySelector('div').firstChild;
+              block.focus(); const range=document.createRange(); range.setStart(text,text.length); range.collapse(true);
+              getSelection().removeAllRanges();getSelection().addRange(range);
+              block.dispatchEvent(new Event('input',{bubbles:true}));
+              block.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+              return block.querySelector('h2').textContent + '|' + block.querySelector('div').textContent; })()
+            """, in: view)
+        for _ in 0..<50 where probe.slashPageToken == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let token = try #require(probe.slashPageToken)
+        #expect(result == "标题|\(token)")
+        #expect(!result.contains("/page"))
+    }
+
+    @Test @MainActor func clickingLocalMarkdownLinkIsHandledByEditor() async throws {
+        let (view, _) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><a href=\"file:///tmp/child.md\">子笔记</a></div>")
+        let result = try await evaluateInEditorWorld("""
+            (() => { const e = new MouseEvent('click', { bubbles: true, cancelable: true });
+                     document.querySelector('a').dispatchEvent(e); return String(e.defaultPrevented); })()
+            """, in: view)
+        #expect(result == "true")
+    }
+
     @Test @MainActor func pastedRichTextUsesPlainTextWithoutExternalStyling() async throws {
         let (view, probe) = await loadedEditorHTML("<div data-visual-index=\"0\" contenteditable=\"true\"><p>笔记：</p></div>")
         let html = try await evaluateInEditorWorld("""

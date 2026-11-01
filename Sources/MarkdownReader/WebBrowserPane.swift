@@ -258,6 +258,7 @@ struct WebBrowserPane: View {
             .padding(.horizontal, 8).frame(height: 34)
             .background(Color(nsColor: .controlBackgroundColor).opacity(0.78))
             .overlay(alignment: .bottom) { Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1) }
+            QuickSitesBar(currentURL: session.currentURL, currentTitle: session.title) { session.open($0) }
             WebPageView(session: session, zoomPercent: zoomPercent, onActivate: onActivate)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay {
@@ -272,7 +273,7 @@ struct WebBrowserPane: View {
                         VStack(spacing: 10) {
                             Image(systemName: "globe").font(.system(size: 34, weight: .ultraLight)).foregroundStyle(.tertiary)
                             Text("打开网页开始阅读").font(.system(size: 15, weight: .medium)).foregroundStyle(.secondary)
-                            Text("仅提供基础网页阅读、收藏与选区剪藏").font(.system(size: 11)).foregroundStyle(.tertiary)
+                            Text("输入网址或搜索内容，也可以打开常用网站").font(.system(size: 11)).foregroundStyle(.tertiary)
                         }
                     }
                 }
