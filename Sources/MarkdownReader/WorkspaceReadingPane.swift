@@ -3,6 +3,12 @@ import EPUBCore
 import PDFKit
 import SwiftUI
 
+struct WorkspaceEPUBNavigationTarget: Equatable {
+    let chapterIndex: Int
+    let fragment: String?
+    let revision: Int
+}
+
 /// A reading tab loads and owns its own document state. Changing the active
 /// reading tab therefore cannot replace the content or position of another tab.
 struct WorkspaceReadingPane: View {
@@ -19,6 +25,10 @@ struct WorkspaceReadingPane: View {
     let lineHeight: Double
     let onActivate: () -> Void
     let onError: (String) -> Void
+    let epubNavigationTarget: WorkspaceEPUBNavigationTarget?
+    let onEPUBLoaded: (EPUBPackageDocument) -> Void
+    let onEPUBChapterChanged: (Int) -> Void
+    @Binding var chapter: Int
     @Binding var pdfZoomPercent: Double
     @Binding var officeZoomPercent: Double
     @Binding var currentPDFPage: Int
@@ -27,7 +37,7 @@ struct WorkspaceReadingPane: View {
     @State private var pdfDocument: PDFDocument?
     @State private var epubDocument: EPUBPackageDocument?
     @State private var officeState = OfficePreviewState()
-    @State private var chapter = 0
+    @State private var scrollFragment: String?
     @State private var pdfPosition: PDFReadingPosition?
     @State private var navigationRequest = 0
     @State private var loading = true
@@ -47,7 +57,7 @@ struct WorkspaceReadingPane: View {
                     bodyColorHex: bodyColorHex, annotationFontSize: annotationFontSize,
                     annotationFontFamily: annotationFontFamily, annotationTextColorHex: annotationTextColorHex,
                     backgroundColorHex: backgroundHex, lineHeight: lineHeight,
-                    scrollFragment: nil, scrollRequest: navigationRequest, annotations: [],
+                    scrollFragment: scrollFragment, scrollRequest: navigationRequest, annotations: [],
                     annotationJumpID: nil, annotationJumpRequest: 0, savedPosition: nil,
                     positionRestoreRequest: 0, onActivate: onActivate,
                     onNavigateChapter: navigateChapter, onTextSelection: { _ in },
@@ -64,7 +74,12 @@ struct WorkspaceReadingPane: View {
         }
         .background(Color(hex: backgroundHex))
         .task(id: url.standardizedFileURL) { if isActive { load() } }
+        .task(id: epubNavigationTarget?.revision) { applyEPUBNavigationTarget() }
         .onChange(of: isActive) { _, active in if active && !didLoad { load() } }
+        .background {
+            EPUBArrowKeyMonitor(isEnabled: isActive && epubDocument != nil, onNavigateChapter: navigateChapter)
+                .frame(width: 0, height: 0)
+        }
     }
 
     private func load() {
@@ -79,7 +94,13 @@ struct WorkspaceReadingPane: View {
             return
         }
         if ext == "epub" || FileManager.default.fileExists(atPath: url.appendingPathComponent("META-INF/container.xml").path) {
-            do { epubDocument = try EPUBPackageDocument.open(url) }
+            do {
+                let document = try EPUBPackageDocument.open(url)
+                epubDocument = document
+                onEPUBLoaded(document)
+                onEPUBChapterChanged(chapter)
+                applyEPUBNavigationTarget()
+            }
             catch { onError("无法读取 EPUB：\(error.localizedDescription)") }
             return
         }
@@ -91,6 +112,17 @@ struct WorkspaceReadingPane: View {
         let next = chapter + offset
         guard epubDocument.chapters.indices.contains(next) else { return }
         chapter = next
+        scrollFragment = nil
         navigationRequest += 1
+        onEPUBChapterChanged(chapter)
+    }
+
+    private func applyEPUBNavigationTarget() {
+        guard let target = epubNavigationTarget, let epubDocument,
+              epubDocument.chapters.indices.contains(target.chapterIndex) else { return }
+        chapter = target.chapterIndex
+        scrollFragment = target.fragment
+        navigationRequest += 1
+        onEPUBChapterChanged(chapter)
     }
 }
