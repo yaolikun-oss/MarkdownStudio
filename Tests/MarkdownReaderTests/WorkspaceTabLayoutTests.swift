@@ -53,6 +53,27 @@ struct WorkspaceTabLayoutTests {
         #expect(decoded.missingFiles == [missing])
         #expect(try String(contentsOf: note, encoding: .utf8) == "# 测试")
     }
+    @Test func workspaceDocumentKeepsReadingNoteLinksAndOpensOlderFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let book = root.appendingPathComponent("阅读资料/书.epub")
+        let note = root.appendingPathComponent("笔记/书籍笔记/书.md")
+        try FileManager.default.createDirectory(at: book.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: note.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("epub".utf8).write(to: book)
+        try Data("# 书".utf8).write(to: note)
+        let link = WorkspaceReadingNoteLink(readingURL: book, noteURL: note)
+        let document = WorkspaceDocument(folders: [root], layout: WorkspaceGridLayout(), readingNotes: [link])
+        let decoded = try JSONDecoder().decode(WorkspaceDocument.self, from: JSONEncoder().encode(document))
+        #expect(decoded.readingNotes == [link])
+        #expect(decoded.missingFiles.isEmpty)
+
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(document)) as? [String: Any])
+        legacy.removeValue(forKey: "readingNotes")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacy)
+        #expect(try JSONDecoder().decode(WorkspaceDocument.self, from: legacyData).readingNotes.isEmpty)
+    }
     @Test func savedWorkspaceDetectsReferencesLostAfterOpening() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

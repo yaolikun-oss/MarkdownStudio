@@ -80,10 +80,16 @@ struct WorkspaceTabGroup<Content: View>: View {
                             HStack(spacing: 6) {
                                 Button { select(tab) } label: {
                                     HStack(spacing: 5) {
-                                        Text(title(tab)).lineLimit(1)
+                                        Text(title(tab))
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                            .frame(maxWidth: tab.id == group.selected ? 240 : 168,
+                                                   alignment: .leading)
                                         if isDirty(tab) { Circle().frame(width: 6, height: 6).accessibilityLabel("未保存") }
                                     }.font(.system(size: 12))
-                                }.buttonStyle(.plain).help("切换到\(title(tab))；拖动标签可分屏或合并，右键可选择拆分方向")
+                                }.buttonStyle(.plain)
+                                    .help("\(title(tab))\n拖动标签可分屏或合并；右键可选择拆分方向")
+                                    .accessibilityLabel(title(tab))
                                     .simultaneousGesture(DragGesture(minimumDistance: 5, coordinateSpace: .global)
                                         .onChanged { value in
                                             let destination = dragFrames.destination(at: value.location, groups: groups)

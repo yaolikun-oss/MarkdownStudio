@@ -510,6 +510,7 @@ struct ReaderView: View {
     @State private var folderURL: URL?
     @State private var workspaceFolders: [URL] = []
     @State private var workspaceFiles: [URL] = []
+    @State private var workspaceReadingNotes: [WorkspaceReadingNoteLink] = []
     @State private var workspaceFileURL: URL?
     @State private var workspaceHasMissingReferences = false
     @State private var markdownFiles: [URL] = []
@@ -920,12 +921,12 @@ struct ReaderView: View {
         .confirmationDialog("打开电子书的方式", isPresented: $showEPUBModeChoice, titleVisibility: .visible) {
             Button("阅读原文") { openEPUBOriginal(editable: false) }
             Button("编辑并另存 EPUB") { openEPUBOriginal(editable: true) }
-            Button("写配套 Markdown 笔记") { openEPUBNote() }
+            Button("写配套 Markdown 笔记") { openEPUBCompanionNote() }
             Button("取消", role: .cancel) { pendingEPUBURL = nil; pendingConvertedEPUBURL = nil }
         } message: {
             Text(pendingConvertedEPUBURL == nil
-                 ? "原文编辑会另存为新的 EPUB；笔记会与原书同名保存为 .md 文件。"
-                 : "已转换为 EPUB 并检查章节，原书未修改。编辑后只能另存 EPUB；笔记与原书同名保存为 .md 文件。")
+                 ? "原文编辑会另存为新的 EPUB；工程内的配套笔记保存在“笔记/书籍笔记”。"
+                 : "已转换为 EPUB 并检查章节，原书未修改。编辑后只能另存 EPUB；工程内的配套笔记保存在“笔记/书籍笔记”。")
         }
         .alert("PDF 需要密码", isPresented: $showPDFPasswordPrompt) {
             SecureField("输入密码", text: $pdfPassword)
@@ -955,6 +956,7 @@ struct ReaderView: View {
         .onChange(of: workspaceResourcesKey) { _, _ in persistWorkspaceGrid() }
         .onChange(of: workspaceFolders) { _, _ in persistWorkspaceGrid() }
         .onChange(of: workspaceFiles) { _, _ in persistWorkspaceGrid() }
+        .onChange(of: workspaceReadingNotes) { _, _ in persistWorkspaceGrid() }
         .onChange(of: readerWidth) { _, value in readerWidthInput = "\(Int(value))" }
         .onChange(of: previewStyleData) { _, _ in previewWidthInput = "\(Int(previewStyle.readerWidth))" }
         .onChange(of: sourceStyleData) { _, _ in sourceWidthInput = "\(Int(sourceStyle.readerWidth))" }
@@ -1099,7 +1101,7 @@ struct ReaderView: View {
                 Button(action: chooseFolder) { Image(systemName: "folder.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
                     .buttonStyle(.plain).help("打开工程文件夹").toolbarHint("打开工程文件夹")
                 Button(action: chooseFile) { Image(systemName: "doc.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
-                    .buttonStyle(.plain).help("添加文件到当前工程").toolbarHint("添加文件到当前工程")
+                    .buttonStyle(.plain).help("打开文件；阅读资料会复制到当前工程").toolbarHint("打开文件；阅读资料会复制到当前工程")
                 Button(action: closeSidebarSelection) {
                     Image(systemName: "xmark.circle").frame(width: 28, height: 26).contentShape(Rectangle())
                 }
@@ -1164,8 +1166,9 @@ struct ReaderView: View {
                 Menu {
                     Button("新建 Workspace…") { createWorkspace() }
                     Divider()
+                    Button("打开文件…") { chooseFile() }
                     Button("添加文件夹到工作区…") { chooseAdditionalWorkspaceFolder() }
-                    Button("添加文件到工作区…") { chooseAdditionalWorkspaceFiles() }
+                    Button("添加外部文件引用…") { chooseAdditionalWorkspaceFiles() }
                     Button("打开工作区…") { chooseWorkspaceFile() }
                     Button("保存工作区…") { saveWorkspaceFile() }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -1586,7 +1589,12 @@ struct ReaderView: View {
 
     private func showWorkspaceNoteTab(_ kind: WorkspaceTab.Kind) {
         guard let selectedFile else { return }
-        if let existing = workspaceTabs.allTabs.first(where: { $0.kind == kind }) { selectWorkspaceTab(existing); return }
+        if let existing = workspaceTabs.allTabs.first(where: {
+            $0.kind == kind && $0.location?.standardizedFileURL == selectedFile.standardizedFileURL
+        }) {
+            selectWorkspaceTab(existing)
+            return
+        }
         let tab = WorkspaceTab(kind, location: selectedFile)
         MarkdownVisualCommandHub.commitActiveEdits {
             workspaceTabs.add(tab)
@@ -2110,6 +2118,7 @@ struct ReaderView: View {
         showsNotesTab = false
         if displayMode == .split { displayMode = .read }
         activateWorkspaceArea(.office)
+        activateCompanionNote(for: url, selectNote: false)
         recordRecentWorkspace()
     }
 
@@ -2311,6 +2320,7 @@ struct ReaderView: View {
             workspaceNoteIdentity = nil; workspaceReadingIdentity = nil
             workspaceFolders = document.folders.filter { FileManager.default.fileExists(atPath: $0.path) }
             workspaceFiles = document.files.filter { FileManager.default.fileExists(atPath: $0.path) }
+            workspaceReadingNotes = document.readingNotes
             folderURL = workspaceFolders.first
             lastFolderPath = folderURL?.path ?? ""
             workspaceFileURL = url
@@ -2330,9 +2340,12 @@ struct ReaderView: View {
             if let note {
                 _ = documentSessions.adoptMarkdown(note, text: source)
                 let existing = workspaceTabs.allTabs.filter { $0.location?.standardizedFileURL == note }
-                if !existing.contains(where: { $0.kind == .visual }) { workspaceTabs.add(WorkspaceTab(.visual, location: note)) }
-                if !existing.contains(where: { $0.kind == .source }) { workspaceTabs.add(WorkspaceTab(.source, location: note)) }
-                if let visual = workspaceTabs.allTabs.first(where: { $0.kind == .visual && $0.location?.standardizedFileURL == note }) {
+                if let preferred = existing.first(where: { $0.kind == .visual })
+                    ?? existing.first(where: { $0.kind == .source }) {
+                    workspaceTabs.select(preferred.id)
+                } else {
+                    let visual = WorkspaceTab(.visual, location: note)
+                    workspaceTabs.add(visual)
                     workspaceTabs.select(visual.id)
                 }
             }
@@ -2418,10 +2431,15 @@ struct ReaderView: View {
 
     private func workspaceTabTitle(_ tab: WorkspaceTab) -> String {
         switch tab.kind {
-        case .reading: return tab.location?.deletingPathExtension().lastPathComponent ?? "阅读"
+        case .reading: return "\(tab.location?.deletingPathExtension().lastPathComponent ?? "阅读") · 原文"
         case .web: return webSessions.session(for: tab.id)?.title ?? "网页"
         case .source: return "\(tab.location?.deletingPathExtension().lastPathComponent ?? "Markdown") · 源码"
-        case .visual: return tab.location?.deletingPathExtension().lastPathComponent ?? "可视化笔记"
+        case .visual:
+            let name = tab.location?.deletingPathExtension().lastPathComponent ?? "可视化笔记"
+            let isCompanion = tab.location.map { note in
+                workspaceReadingNotes.contains { $0.noteURL.standardizedFileURL == note.standardizedFileURL }
+            } ?? false
+            return isCompanion ? "\(name) · 笔记" : name
         }
     }
 
@@ -3605,6 +3623,7 @@ struct ReaderView: View {
         clearReadingSource()
         workspaceFolders = []
         workspaceFiles = []
+        workspaceReadingNotes = []
         workspaceFileURL = nil
         workspaceHasMissingReferences = false
         currentWorkspacePath = ""
@@ -3635,6 +3654,7 @@ struct ReaderView: View {
             currentWorkspacePath = manifest.path
             workspaceFolders = project.folders.filter { FileManager.default.fileExists(atPath: $0.path) }
             workspaceFiles = project.files.filter { FileManager.default.fileExists(atPath: $0.path) }
+            workspaceReadingNotes = project.readingNotes
             folderURL = workspaceFolders.first
             workspaceHasMissingReferences = !project.missingFiles.isEmpty
         } catch { saveError = "无法建立工程工作区：\(error.localizedDescription)" }
@@ -3688,7 +3708,8 @@ struct ReaderView: View {
             if tab.kind == .web { value.location = webSessions.session(for: tab.id)?.currentURL }
             return value
         }
-        return WorkspaceDocument(folders: workspaceFolders, files: workspaceFiles, layout: layout)
+        return WorkspaceDocument(folders: workspaceFolders, files: workspaceFiles, layout: layout,
+                                 readingNotes: workspaceReadingNotes)
     }
 
     private func restoreWorkspaceMetadata() {
@@ -3702,6 +3723,7 @@ struct ReaderView: View {
         let missing = document.missingFiles
         workspaceFolders = document.folders.filter { FileManager.default.fileExists(atPath: $0.path) }
         workspaceFiles = document.files.filter { FileManager.default.fileExists(atPath: $0.path) }
+        workspaceReadingNotes = document.readingNotes
         folderURL = workspaceFolders.first
         workspaceFileURL = url
         workspaceHasMissingReferences = !missing.isEmpty
@@ -3820,11 +3842,26 @@ struct ReaderView: View {
         let projectName = root.lastPathComponent
         let mainNote = notesDirectory.appendingPathComponent("主笔记.md")
         if !manager.fileExists(atPath: mainNote.path) {
-            try "# \(projectName)\n\n".write(to: mainNote, atomically: true, encoding: .utf8)
+            let template = """
+            # \(projectName)
+
+            ## 学习目标
+
+            说明这个主题要解决的问题、范围和预期成果。
+
+            ## 资料与笔记
+
+            每本电子书会在“笔记/书籍笔记”中建立自己的配套笔记；跨资料内容可以整理为专题笔记。
+
+            ## 综合结论
+
+            汇总不同资料之间的联系、分歧和最终认识。
+
+            """
+            try template.write(to: mainNote, atomically: true, encoding: .utf8)
         }
         var layout = WorkspaceGridLayout()
         layout.add(WorkspaceTab(.visual, location: mainNote))
-        layout.add(WorkspaceTab(.source, location: mainNote))
         let manifest = root.appendingPathComponent("\(projectName).mdworkspace")
         try writeWorkspaceDocument(WorkspaceDocument(folders: [root], layout: layout), to: manifest)
         return (manifest, mainNote)
@@ -4399,6 +4436,74 @@ struct ReaderView: View {
         try WorkspaceResourceImporter.copyVerified(source, into: directory)
     }
 
+    private func ensureCompanionNote(for readingURL: URL) throws -> URL? {
+        guard isReadingResource(readingURL), let root = workspaceFolders.first?.standardizedFileURL else { return nil }
+        let canonicalReading = readingURL.standardizedFileURL
+        let manager = FileManager.default
+
+        let noteURL: URL
+        if let existing = workspaceReadingNotes.first(where: {
+            $0.readingURL.standardizedFileURL == canonicalReading
+        }) {
+            noteURL = existing.noteURL.standardizedFileURL
+        } else {
+            let directory = root.appendingPathComponent("笔记/书籍笔记", isDirectory: true)
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let base = WorkspaceResourceImporter.sanitizedWorkspaceName(
+                canonicalReading.deletingPathExtension().lastPathComponent)
+            var candidate = directory.appendingPathComponent("\(base).md")
+            var suffix = 2
+            let used = Set(workspaceReadingNotes.map { $0.noteURL.standardizedFileURL.path })
+            while used.contains(candidate.standardizedFileURL.path) {
+                candidate = directory.appendingPathComponent("\(base)-\(suffix).md")
+                suffix += 1
+            }
+            noteURL = candidate
+            workspaceReadingNotes.append(WorkspaceReadingNoteLink(readingURL: canonicalReading, noteURL: noteURL))
+        }
+
+        try manager.createDirectory(at: noteURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !manager.fileExists(atPath: noteURL.path) {
+            let title = canonicalReading.deletingPathExtension().lastPathComponent
+            try "# \(title)\n\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        }
+        let document = try documentStore.openDocument(at: noteURL)
+        _ = documentSessions.adoptMarkdown(noteURL, text: document.source)
+        if !workspaceTabs.allTabs.contains(where: {
+            $0.kind == .visual && $0.location?.standardizedFileURL == noteURL.standardizedFileURL
+        }) {
+            workspaceTabs.add(WorkspaceTab(.visual, location: noteURL))
+        }
+        return noteURL
+    }
+
+    private func companionNoteURL(for readingURL: URL) -> URL? {
+        let reading = readingURL.standardizedFileURL
+        return workspaceReadingNotes.first(where: {
+            $0.readingURL.standardizedFileURL == reading
+        })?.noteURL.standardizedFileURL
+    }
+
+    private func activateCompanionNote(for readingURL: URL, selectNote: Bool) {
+        guard let noteURL = companionNoteURL(for: readingURL),
+              FileManager.default.fileExists(atPath: noteURL.path) else { return }
+        let kind: WorkspaceTab.Kind = selectNote ? .visual : .reading
+        let location = selectNote ? noteURL : readingURL.standardizedFileURL
+        if selectNote {
+            loadDocument(noteURL, preservingEPUB: epubDocument != nil, preservingPDF: pdfDocument != nil,
+                         preservingWeb: webBrowser.currentURL != nil, preservingOffice: officeDocumentURL != nil)
+        }
+        if let tab = workspaceTabs.allTabs.first(where: {
+            $0.kind == kind && $0.location?.standardizedFileURL == location
+        }) {
+            selectWorkspaceTab(tab)
+        } else if kind == .reading {
+            let tab = WorkspaceTab(.reading, location: location)
+            workspaceTabs.add(tab)
+            selectWorkspaceTab(tab)
+        }
+    }
+
     private func open(_ url: URL, importIntoWorkspace: Bool = true) {
         if url.isFileURL && url.pathExtension.lowercased() == "mdworkspace" {
             openWorkspaceFile(url)
@@ -4454,6 +4559,13 @@ struct ReaderView: View {
         if importIntoWorkspace {
             ensureAutomaticProject(for: openingURL, isFolder: false)
             registerWorkspaceResource(openingURL)
+            if isReadingResource(openingURL) {
+                do { _ = try ensureCompanionNote(for: openingURL) }
+                catch {
+                    saveError = "无法建立配套 Markdown 笔记：\(error.localizedDescription)"
+                    return
+                }
+            }
         }
         if (openingURL.pathExtension.lowercased() == "epub" || openingURL.pathExtension.lowercased() == "pdf"
             || KindleBookConverter.isSupported(openingURL) || isUnpackedEPUBDirectory(openingURL)),
@@ -4560,6 +4672,7 @@ struct ReaderView: View {
             epubHasChanges = false
             documentTitle = epubDocument?.title ?? url.deletingPathExtension().lastPathComponent
             displayMode = editable ? .edit : .read
+            activateCompanionNote(for: url, selectNote: false)
             recordRecentWorkspace()
         } catch {
             saveError = error.localizedDescription
@@ -4580,6 +4693,16 @@ struct ReaderView: View {
                 performOpenEPUBNote(url, convertedURL: convertedURL)
             }
         }
+    }
+
+    private func openEPUBCompanionNote() {
+        guard let url = pendingEPUBURL else { return }
+        if companionNoteURL(for: url) == nil {
+            openEPUBNote()
+            return
+        }
+        openEPUBOriginal(editable: false)
+        activateCompanionNote(for: url, selectNote: true)
     }
 
     private func performOpenEPUBNote(_ url: URL, convertedURL: URL?) {
@@ -4748,6 +4871,7 @@ struct ReaderView: View {
             ?? url.deletingPathExtension().lastPathComponent
         beginLoadingReadingProfile(for: url, sourceKind: .pdf, title: documentTitle)
         displayMode = .edit
+        activateCompanionNote(for: url, selectNote: false)
         recordRecentWorkspace()
     }
 
@@ -5278,6 +5402,7 @@ struct ReaderView: View {
         folderURL = nil
         workspaceFolders = []
         workspaceFiles = []
+        workspaceReadingNotes = []
         workspaceFileURL = nil
         currentWorkspacePath = ""
         workspaceHasMissingReferences = false
