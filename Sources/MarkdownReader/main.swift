@@ -511,6 +511,7 @@ struct ReaderView: View {
     @State private var workspaceEPUBChapters: [String: Int] = [:]
     @State private var workspaceEPUBNavigationTargets: [String: WorkspaceEPUBNavigationTarget] = [:]
     @State private var workspaceMarkdownNavigationTargets: [String: WorkspaceMarkdownNavigationTarget] = [:]
+    @State private var workspaceMarkdownSourceLines: [String: Int] = [:]
     @State private var workspaceChapterLinks: [WorkspaceChapterLink] = []
     @State private var workspaceResourceFingerprints: [String: String] = [:]
     @State private var pendingWorkspaceFileDrop: (url: URL, group: UUID, edge: WorkspaceDropEdge)?
@@ -754,7 +755,19 @@ struct ReaderView: View {
     }
 
     private func currentMarkdownHeading() -> MarkdownBlock? {
-        headings.last { $0.headingLevel != nil && $0.sourceLine <= synchronizedSourceLine }
+        let noteURL = activeWorkspaceMarkdownURL ?? selectedFile
+        let noteKey = noteURL?.standardizedFileURL.path
+        let actualLine: Int
+        if let noteURL, let session = documentSessions.session(for: noteURL) {
+            let preferredSelection = session.position.activeMode == .visual
+                ? (session.position.selection ?? session.selection) : session.selection
+            let location = min(max(0, preferredSelection.location), (session.text as NSString).length)
+            actualLine = (session.text as NSString).substring(to: location)
+                .components(separatedBy: "\n").count
+        } else {
+            actualLine = noteKey.flatMap { workspaceMarkdownSourceLines[$0] } ?? synchronizedSourceLine
+        }
+        return headings.last { $0.headingLevel != nil && $0.sourceLine <= actualLine }
             ?? headings.first(where: { $0.headingLevel != nil })
     }
 
@@ -2703,6 +2716,8 @@ struct ReaderView: View {
             for id in webSessions.tabIDs { webSessions.close(id) }
             workspaceTabs = WorkspaceGridLayout()
             workspaceNoteIdentity = nil; workspaceReadingIdentity = nil
+            workspaceMarkdownNavigationTargets = [:]
+            workspaceMarkdownSourceLines = [:]
             workspaceFolders = document.folders.filter { FileManager.default.fileExists(atPath: $0.path) }
             workspaceFiles = document.files.filter { FileManager.default.fileExists(atPath: $0.path) }
             workspaceReadingNotes = document.readingNotes
@@ -2880,6 +2895,12 @@ struct ReaderView: View {
                         activateWorkspaceMarkdownSession(session, mode: mode)
                     },
                     onTextChange: synchronizeActiveWorkspaceSession,
+                    onSourceLineChange: { session, line in
+                        workspaceMarkdownSourceLines[session.url.standardizedFileURL.path] = line
+                        if activeWorkspaceMarkdownURL?.standardizedFileURL == session.url.standardizedFileURL {
+                            synchronizedSourceLine = line
+                        }
+                    },
                     onOpenLink: openMarkdownReference,
                     onNativeSlashCommand: applyWorkspaceSlashCommand,
                     onDeleteManagedNote: deleteWorkspaceManagedChild,
@@ -2908,6 +2929,14 @@ struct ReaderView: View {
         savedSource = session.savedText
         editorSelection = session.selection
         visualScrollState = session.position
+        let key = session.url.standardizedFileURL.path
+        let activeSelection = session.position.activeMode == .visual
+            ? (session.position.selection ?? session.selection) : session.selection
+        let selectionLocation = min(max(0, activeSelection.location), (session.text as NSString).length)
+        let selectionLine = (session.text as NSString).substring(to: selectionLocation)
+            .components(separatedBy: "\n").count
+        synchronizedSourceLine = workspaceMarkdownSourceLines[key] ?? selectionLine
+        workspaceMarkdownSourceLines[key] = synchronizedSourceLine
         sidebarOutlineTab = .markdown
         if needsOutlineRefresh { refreshOutlineImmediately(for: session) }
         activateWorkspaceArea(mode == .source ? .markdownEditor : .markdownPreview)
@@ -4052,6 +4081,7 @@ struct ReaderView: View {
         workspaceReadingNotes = []
         workspaceChapterLinks = []
         workspaceMarkdownNavigationTargets = [:]
+        workspaceMarkdownSourceLines = [:]
         workspaceResourceFingerprints = [:]
         workspaceFileURL = nil
         workspaceHasMissingReferences = false
@@ -4206,6 +4236,7 @@ struct ReaderView: View {
         workspaceEPUBChapters.removeValue(forKey: canonical.path)
         workspaceEPUBNavigationTargets.removeValue(forKey: canonical.path)
         workspaceMarkdownNavigationTargets.removeValue(forKey: canonical.path)
+        workspaceMarkdownSourceLines.removeValue(forKey: canonical.path)
         workspaceResourceFingerprints.removeValue(forKey: canonical.path)
         workspaceFileTreeRevision += 1
     }
@@ -6108,6 +6139,7 @@ struct ReaderView: View {
         workspaceReadingNotes = []
         workspaceChapterLinks = []
         workspaceMarkdownNavigationTargets = [:]
+        workspaceMarkdownSourceLines = [:]
         workspaceResourceFingerprints = [:]
         workspaceFileURL = nil
         currentWorkspacePath = ""

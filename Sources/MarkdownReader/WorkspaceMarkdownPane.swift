@@ -13,6 +13,7 @@ struct WorkspaceMarkdownPane: View {
     let syntaxHighlighting: Bool
     let onActivate: (WorkspaceMarkdownSession, Mode) -> Void
     let onTextChange: (WorkspaceMarkdownSession) -> Void
+    let onSourceLineChange: (WorkspaceMarkdownSession, Int) -> Void
     let onOpenLink: (URL) -> Void
     let onNativeSlashCommand: (WorkspaceMarkdownSession, String, String?) -> Void
     let onDeleteManagedNote: (WorkspaceMarkdownSession, URL) -> Void
@@ -33,6 +34,7 @@ struct WorkspaceMarkdownPane: View {
          syntaxHighlighting: Bool,
          onActivate: @escaping (WorkspaceMarkdownSession, Mode) -> Void,
          onTextChange: @escaping (WorkspaceMarkdownSession) -> Void,
+         onSourceLineChange: @escaping (WorkspaceMarkdownSession, Int) -> Void = { _, _ in },
          onOpenLink: @escaping (URL) -> Void,
          onNativeSlashCommand: @escaping (WorkspaceMarkdownSession, String, String?) -> Void,
          onDeleteManagedNote: @escaping (WorkspaceMarkdownSession, URL) -> Void,
@@ -45,6 +47,7 @@ struct WorkspaceMarkdownPane: View {
         self.syntaxHighlighting = syntaxHighlighting
         self.onActivate = onActivate
         self.onTextChange = onTextChange
+        self.onSourceLineChange = onSourceLineChange
         self.onOpenLink = onOpenLink
         self.onNativeSlashCommand = onNativeSlashCommand
         self.onDeleteManagedNote = onDeleteManagedNote
@@ -81,6 +84,7 @@ struct WorkspaceMarkdownPane: View {
         .task(id: navigationTarget?.revision) {
             guard let target = navigationTarget else { return }
             sourceLine = target.sourceLine
+            onSourceLineChange(session, target.sourceLine)
             sourceLineRequest += 1
             visualLineRequest += 1
         }
@@ -100,7 +104,11 @@ struct WorkspaceMarkdownPane: View {
             syntaxHighlightingEnabled: syntaxHighlighting,
             sourceLineTarget: sourceLine, sourceLineRequest: sourceLineRequest,
             focusRequest: focusRequest,
-            onSourceLineChange: { line in sourceLine = line; visualLineRequest += 1 },
+            onSourceLineChange: { line in
+                sourceLine = line
+                onSourceLineChange(session, line)
+                visualLineRequest += 1
+            },
             onActivate: { onActivate(session, .source) },
             onImagePaste: importImageFromPasteboard,
             positionState: session.position, positionRestoreRequest: sourceRestoreRequest)
@@ -119,7 +127,11 @@ struct WorkspaceMarkdownPane: View {
             baseURL: session.url.deletingLastPathComponent(), scrollTarget: nil, scrollRequest: 0,
             sourceLineTarget: sourceLine, sourceLineRequest: visualLineRequest,
             restoreRequest: visualRestoreRequest, scrollState: session.position,
-            onSourceLineChange: { line in sourceLine = line; sourceLineRequest += 1 },
+            onSourceLineChange: { line in
+                sourceLine = line
+                onSourceLineChange(session, line)
+                sourceLineRequest += 1
+            },
             onActivate: { onActivate(session, .visual) },
             onImagePaste: importVisualImage,
             onMarkdownLink: onOpenLink,
