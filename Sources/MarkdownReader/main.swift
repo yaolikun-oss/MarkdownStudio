@@ -600,6 +600,8 @@ struct ReaderView: View {
     @State private var isConvertingKindle = false
     @State private var kindleConversionRevision = 0
     @State private var kindleConversionTask: Task<URL, Error>?
+    @State private var isImportingReadingResource = false
+    @State private var readingImportTask: Task<Void, Never>?
     @State private var isEPUBNotebook = false
     @State private var epubNotebookLayout: EPUBNotebookLayout = .stacked
     @State private var officeDocumentURL: URL?
@@ -856,8 +858,8 @@ struct ReaderView: View {
             activateWorkspaceArea(mode == .edit ? .markdownEditor : .markdownReader)
         }
         .overlay {
-            if isConvertingKindle {
-                ProgressView("正在转换电子书为 EPUB…")
+            if isConvertingKindle || isImportingReadingResource {
+                ProgressView(isConvertingKindle ? "正在转换电子书为 EPUB…" : "正在复制并校验阅读资料…")
                     .padding(20)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             }
@@ -948,7 +950,10 @@ struct ReaderView: View {
             Text("此 PDF 受密码保护。")
         }
         .onAppear { handleReaderAppear(openWindow: openWindow) }
-        .onDisappear { kindleConversionTask?.cancel() }
+        .onDisappear {
+            kindleConversionTask?.cancel()
+            readingImportTask?.cancel()
+        }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(20))
@@ -2499,7 +2504,7 @@ struct ReaderView: View {
                     syntaxHighlighting: sourceSyntaxHighlighting,
                     onActivate: activateWorkspaceMarkdownSession,
                     onTextChange: synchronizeActiveWorkspaceSession,
-                    onOpenLink: { open($0) },
+                    onOpenLink: openMarkdownReference,
                     onNativeSlashCommand: applyWorkspaceSlashCommand,
                     onDeleteManagedNote: deleteWorkspaceManagedChild,
                     onError: { saveError = $0 })
@@ -3738,13 +3743,16 @@ struct ReaderView: View {
     private func importFilesIntoWorkspaceFolder(_ directory: URL) {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = WorkspaceFileEntry.supported.compactMap { UTType(filenameExtension: $0) }
         panel.directoryURL = directory
         guard panel.runModal() == .OK else { return }
         do {
             for source in panel.urls {
+                guard WorkspaceResourceImporter.isSupportedWorkspaceItem(source) else {
+                    throw CocoaError(.fileReadUnsupportedScheme, userInfo: [NSLocalizedDescriptionKey:
+                        "“\(source.lastPathComponent)”不是支持的文档，也不是包含 META-INF/container.xml 的 EPUB 文件夹。"])
+                }
                 _ = try WorkspaceResourceImporter.copyVerified(source, into: directory)
             }
             workspaceFileTreeRevision += 1
@@ -3981,16 +3989,22 @@ struct ReaderView: View {
     private func importWorkspaceResources(into root: URL, manifest: URL) {
         let panel = NSOpenPanel()
         panel.title = "选择主题资料"
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
-        let extensions = ["epub", "pdf", "mobi", "azw", "azw3", "doc", "docx", "pages"]
-        panel.allowedContentTypes = extensions.compactMap { UTType(filenameExtension: $0) }
         guard panel.runModal() == .OK, !panel.urls.isEmpty else {
             performOpenWorkspace(manifest)
             return
         }
         let sources = panel.urls.map(\.standardizedFileURL)
+        guard let unsupported = sources.first(where: { !WorkspaceResourceImporter.isSupportedWorkspaceItem($0) }) else {
+            return importValidatedWorkspaceResources(sources, into: root, manifest: manifest)
+        }
+        saveError = "“\(unsupported.lastPathComponent)”不是支持的文档，也不是完整的 EPUB 文件夹。"
+        performOpenWorkspace(manifest)
+    }
+
+    private func importValidatedWorkspaceResources(_ sources: [URL], into root: URL, manifest: URL) {
 
         let choice = NSAlert()
         choice.messageText = "如何加入阅读资料？"
@@ -4006,18 +4020,14 @@ struct ReaderView: View {
             switch response {
             case .alertFirstButtonReturn, .alertThirdButtonReturn:
                 let directory = root.appendingPathComponent("阅读资料", isDirectory: true)
-                let destinations = sources.map { directory.appendingPathComponent($0.lastPathComponent) }
-                guard destinations.allSatisfy({ !FileManager.default.fileExists(atPath: $0.path) }) else {
-                    throw CocoaError(.fileWriteFileExists, userInfo: [NSLocalizedDescriptionKey: "工程中已存在同名资料，本次没有覆盖。"])
-                }
-                for (source, destination) in zip(sources, destinations) {
-                    if response == .alertThirdButtonReturn {
-                        try FileManager.default.moveItem(at: source, to: destination)
-                    } else {
-                        try FileManager.default.copyItem(at: source, to: destination)
+                for source in sources {
+                    let destination = try WorkspaceResourceImporter.copyVerified(source, into: directory)
+                    resources.append(destination)
+                    if response == .alertThirdButtonReturn,
+                       source.standardizedFileURL != destination.standardizedFileURL {
+                        try FileManager.default.removeItem(at: source)
                     }
                 }
-                resources = destinations
             case .alertSecondButtonReturn:
                 resources = sources
                 for source in sources where !document.files.contains(where: { $0.standardizedFileURL == source }) {
@@ -4472,9 +4482,16 @@ struct ReaderView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.directoryURL = MarkdownNoteHierarchy.childrenDirectory(of: current)
-        guard panel.runModal() == .OK, let target = panel.url,
-              ["md", "markdown"].contains(target.pathExtension.lowercased()) else { return }
+        panel.directoryURL = workspaceRoot(containing: current)?.appendingPathComponent("笔记", isDirectory: true)
+            ?? current.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let selectedTarget = panel.url,
+              ["md", "markdown"].contains(selectedTarget.pathExtension.lowercased()) else { return }
+        let target: URL
+        do { target = try importedMarkdownReferenceIfNeeded(selectedTarget, from: current) }
+        catch {
+            saveError = "无法引用 Markdown 文件：\(error.localizedDescription)"
+            return
+        }
         let base = current.deletingLastPathComponent().standardizedFileURL.pathComponents
         let destination = target.standardizedFileURL.pathComponents
         let common = zip(base, destination).prefix { $0 == $1 }.count
@@ -4482,18 +4499,55 @@ struct ReaderView: View {
         var pathCharacters = CharacterSet.urlPathAllowed
         pathCharacters.remove(charactersIn: "#?()")
         let encoded = relative.addingPercentEncoding(withAllowedCharacters: pathCharacters) ?? relative
-        let title = target.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "]", with: "\\]")
-        let markdown = embedded ? "\n\n[\(title)](\(encoded) \"mdstudio-embed\")\n\n" : "[\(title)](\(encoded))"
         MarkdownVisualCommandHub.commitActiveEdits {
             MarkdownSourcePositionHub.flushPendingChanges()
             let text = source as NSString
             let selection = visualScrollState.activeMode == .visual ? (visualScrollState.selection ?? editorSelection) : editorSelection
             let location = min(max(0, selection.location), text.length)
-            source = text.replacingCharacters(in: NSRange(location: location, length: 0), with: markdown)
+            let availableLength = min(max(0, selection.length), text.length - location)
+            let selectedText = text.substring(with: NSRange(location: location, length: availableLength))
+            let fallbackTitle = target.deletingPathExtension().lastPathComponent
+            let labelSource = !selectedText.isEmpty && !selectedText.contains("\n") ? selectedText : fallbackTitle
+            let title = labelSource.replacingOccurrences(of: "]", with: "\\]")
+            let markdown = embedded ? "\n\n[\(title)](\(encoded) \"mdstudio-embed\")\n\n" : "[\(title)](\(encoded))"
+            source = text.replacingCharacters(in: NSRange(location: location, length: availableLength), with: markdown)
             editorSelection = NSRange(location: location + (markdown as NSString).length, length: 0)
             visualRestoreRequest += 1
             sourcePositionRestoreRequest += 1
         }
+    }
+
+    private func workspaceRoot(containing url: URL) -> URL? {
+        let path = url.standardizedFileURL.path
+        return workspaceFolders.first(where: {
+            let root = $0.standardizedFileURL.path
+            return path == root || path.hasPrefix(root + "/")
+        })
+    }
+
+    /// References must remain portable with the Workspace. If the selected
+    /// note lives elsewhere, import a verified copy before inserting the
+    /// relative Markdown link. Ordinary reference links never own/delete the
+    /// target note.
+    private func importedMarkdownReferenceIfNeeded(_ target: URL, from current: URL) throws -> URL {
+        let canonical = target.standardizedFileURL
+        guard let root = workspaceRoot(containing: current), workspaceRoot(containing: canonical) == nil else {
+            return canonical
+        }
+        let references = root.appendingPathComponent("笔记/引用笔记", isDirectory: true)
+        return try WorkspaceResourceImporter.copyVerified(canonical, into: references)
+    }
+
+    private func openMarkdownReference(_ target: URL) {
+        guard ["md", "markdown"].contains(target.pathExtension.lowercased()) else {
+            saveError = "链接目标不是 Markdown 文件：\(target.lastPathComponent)"
+            return
+        }
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            saveError = "引用的笔记已经移动或删除：\n\(target.path)"
+            return
+        }
+        open(target, importIntoWorkspace: false)
     }
 
     private func isReadingResource(_ url: URL) -> Bool {
@@ -4647,6 +4701,10 @@ struct ReaderView: View {
         kindleConversionTask = nil
         kindleConversionRevision += 1
         isConvertingKindle = false
+        if importIntoWorkspace, isReadingResource(url), workspaceRoot(containing: url) == nil {
+            beginReadingResourceImport(url)
+            return
+        }
         pendingRecentWorkspace = nil
         if WebBrowserSession.isWebURL(url) {
             openWeb(url)
@@ -4703,6 +4761,62 @@ struct ReaderView: View {
             // When a reading source is open, Markdown documents belong to its notes pane.
             loadDocument(openingURL, preservingEPUB: epubDocument != nil,
                          preservingPDF: pdfDocument != nil, preservingWeb: webBrowser.currentURL != nil, preservingOffice: officeDocumentURL != nil)
+        }
+    }
+
+    /// Large EPUBs must never be copied and hashed on the AppKit event loop.
+    /// Keep the verified project-copy rule, but prepare the Workspace and run
+    /// the expensive recursive copy on a detached task before opening it.
+    private func beginReadingResourceImport(_ source: URL) {
+        readingImportTask?.cancel()
+        let canonical = source.standardizedFileURL
+        isImportingReadingResource = true
+        readingImportTask = Task { @MainActor in
+            do {
+                let root: URL
+                if let activeRoot = workspaceFolders.first?.standardizedFileURL {
+                    root = activeRoot
+                } else {
+                    let manager = FileManager.default
+                    let documents = manager.urls(for: .documentDirectory, in: .userDomainMask).first
+                        ?? manager.homeDirectoryForCurrentUser.appendingPathComponent("Documents", isDirectory: true)
+                    let base = documents.appendingPathComponent("Markdown Studio Workspaces", isDirectory: true)
+                    let safeName = WorkspaceResourceImporter.sanitizedWorkspaceName(
+                        canonical.deletingPathExtension().lastPathComponent)
+                    let plan = try await Task.detached(priority: .userInitiated) { () -> (URL, Bool) in
+                        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+                        if let reusable = WorkspaceResourceImporter.reusableWorkspaceRoot(for: canonical, in: base) {
+                            return (reusable, true)
+                        }
+                        return (WorkspaceResourceImporter.nextWorkspaceRoot(named: safeName, in: base), false)
+                    }.value
+                    try Task.checkCancellation()
+                    root = plan.0
+                    let manifest = root.appendingPathComponent("\(root.lastPathComponent).mdworkspace")
+                    if plan.1 {
+                        performOpenWorkspace(manifest)
+                    } else {
+                        let created = try createWorkspaceScaffold(at: root)
+                        performOpenWorkspace(created.manifest)
+                    }
+                }
+
+                let readingDirectory = root.appendingPathComponent("阅读资料", isDirectory: true)
+                let imported = try await Task.detached(priority: .userInitiated) {
+                    try WorkspaceResourceImporter.copyVerified(canonical, into: readingDirectory)
+                }.value
+                try Task.checkCancellation()
+                isImportingReadingResource = false
+                readingImportTask = nil
+                performOpen(imported, importIntoWorkspace: true)
+            } catch is CancellationError {
+                isImportingReadingResource = false
+                readingImportTask = nil
+            } catch {
+                isImportingReadingResource = false
+                readingImportTask = nil
+                saveError = "无法把阅读资料加入 Workspace：\(error.localizedDescription)"
+            }
         }
     }
 

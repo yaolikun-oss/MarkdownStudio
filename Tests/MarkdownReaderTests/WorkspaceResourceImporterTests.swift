@@ -45,4 +45,28 @@ import Testing
         let next = WorkspaceResourceImporter.nextWorkspaceRoot(named: name, in: base)
         #expect(next.lastPathComponent == "\(name) 2")
     }
+
+    @Test func verifiedCopySupportsCompleteUnpackedEPUBDirectories() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let source = root.appendingPathComponent("source/图文电子书", isDirectory: true)
+        let meta = source.appendingPathComponent("META-INF", isDirectory: true)
+        let images = source.appendingPathComponent("OEBPS/images", isDirectory: true)
+        let destination = root.appendingPathComponent("project/阅读资料", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: meta, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: images, withIntermediateDirectories: true)
+        try Data("container".utf8).write(to: meta.appendingPathComponent("container.xml"))
+        try Data([0, 1, 2, 3, 4]).write(to: images.appendingPathComponent("cover.jpg"))
+
+        #expect(WorkspaceResourceImporter.isUnpackedEPUBDirectory(source))
+        #expect(WorkspaceResourceImporter.isSupportedWorkspaceItem(source))
+        let imported = try WorkspaceResourceImporter.copyVerified(source, into: destination)
+        #expect(WorkspaceResourceImporter.itemsEqual(source, imported))
+        #expect(try WorkspaceResourceImporter.copyVerified(source, into: destination) == imported)
+
+        try Data("changed".utf8).write(to: meta.appendingPathComponent("container.xml"))
+        let second = try WorkspaceResourceImporter.copyVerified(source, into: destination)
+        #expect(second.lastPathComponent == "图文电子书-2")
+        #expect(WorkspaceResourceImporter.itemsEqual(source, second))
+    }
 }

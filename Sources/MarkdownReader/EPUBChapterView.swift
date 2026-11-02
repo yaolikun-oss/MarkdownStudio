@@ -36,6 +36,11 @@ struct EPUBChapterView: NSViewRepresentable {
     let annotationJumpRequest: Int
     let savedPosition: SavedReadingPosition?
     let positionRestoreRequest: Int
+    /// Changes only when the active reading pane explicitly wants keyboard
+    /// focus. This avoids background/retained readers stealing focus during
+    /// ordinary SwiftUI updates while still restoring arrow navigation after
+    /// opening a book, switching tabs, or choosing a TOC item.
+    var focusRequest: Int = 0
     let onActivate: () -> Void
     let onNavigateChapter: (Int) -> Void
     let onTextSelection: (EPUBTextAnchor?) -> Void
@@ -119,6 +124,7 @@ struct EPUBChapterView: NSViewRepresentable {
         context.coordinator.setAnnotations(annotations, jumpID: annotationJumpID,
                                           jumpRequest: annotationJumpRequest, chapterHref: chapter.href)
         context.coordinator.restorePosition(savedPosition, request: positionRestoreRequest, chapterHref: chapter.href)
+        context.coordinator.requestFocus(focusRequest)
         webView.evaluateJavaScript("document.body?.style.setProperty('max-width','\(Int(width))px')")
         webView.evaluateJavaScript(Self.typographyUpdateScript(bodySize: bodySize, bodyFamily: bodyFamily,
                                                                 bodyColorHex: bodyColorHex,
@@ -279,6 +285,10 @@ struct EPUBChapterView: NSViewRepresentable {
         var savedPosition: SavedReadingPosition?
         var positionRestoreRequest = -1
         var lastRestoredPositionRequest = -1
+        // Zero is the neutral/default value used by readers that do not ask
+        // for focus explicitly.
+        var lastFocusRequest = 0
+        var hasPendingFocusRequest = false
         weak var webView: WKWebView?
         init(onBodyChange: @escaping (String) -> Void) { self.onBodyChange = onBodyChange }
 
@@ -320,6 +330,23 @@ struct EPUBChapterView: NSViewRepresentable {
             installReadingPositionTracking()
             restorePendingPosition()
             scrollToPendingFragment()
+            applyPendingFocusRequest()
+        }
+
+        func requestFocus(_ request: Int) {
+            guard request != lastFocusRequest else { return }
+            lastFocusRequest = request
+            hasPendingFocusRequest = true
+            applyPendingFocusRequest()
+        }
+
+        private func applyPendingFocusRequest() {
+            guard hasPendingFocusRequest, let webView, let window = webView.window else { return }
+            hasPendingFocusRequest = false
+            DispatchQueue.main.async { [weak webView, weak window] in
+                guard let webView, let window, webView.window === window else { return }
+                window.makeFirstResponder(webView)
+            }
         }
 
         func restorePosition(_ position: SavedReadingPosition?, request: Int, chapterHref: String) {

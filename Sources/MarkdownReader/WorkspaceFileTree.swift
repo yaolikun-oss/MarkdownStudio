@@ -13,8 +13,9 @@ struct WorkspaceFileEntry: Identifiable, Sendable {
         return urls.compactMap { url in
             guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]),
                   values.isSymbolicLink != true else { return nil }
-            let folder = values.isDirectory == true && values.isPackage != true
-            guard folder || supported.contains(url.pathExtension.lowercased()) else { return nil }
+            let unpackedEPUB = WorkspaceResourceImporter.isUnpackedEPUBDirectory(url)
+            let folder = values.isDirectory == true && values.isPackage != true && !unpackedEPUB
+            guard folder || unpackedEPUB || supported.contains(url.pathExtension.lowercased()) else { return nil }
             return WorkspaceFileEntry(url: url, isDirectory: folder)
         }.sorted {
             if $0.isDirectory != $1.isDirectory { return $0.isDirectory }

@@ -40,6 +40,7 @@ struct WorkspaceReadingPane: View {
     @State private var scrollFragment: String?
     @State private var pdfPosition: PDFReadingPosition?
     @State private var navigationRequest = 0
+    @State private var epubFocusRequest = 0
     @State private var loading = true
     @State private var didLoad = false
 
@@ -59,7 +60,7 @@ struct WorkspaceReadingPane: View {
                     backgroundColorHex: backgroundHex, lineHeight: lineHeight,
                     scrollFragment: scrollFragment, scrollRequest: navigationRequest, annotations: [],
                     annotationJumpID: nil, annotationJumpRequest: 0, savedPosition: nil,
-                    positionRestoreRequest: 0, onActivate: onActivate,
+                    positionRestoreRequest: 0, focusRequest: epubFocusRequest, onActivate: onActivate,
                     onNavigateChapter: navigateChapter, onTextSelection: { _ in },
                     onEditAnnotation: { _ in }, onDeleteAnnotation: { _ in },
                     onReadPosition: { _, _ in }, onBodyChange: { _ in })
@@ -73,16 +74,23 @@ struct WorkspaceReadingPane: View {
             }
         }
         .background(Color(hex: backgroundHex))
-        .task(id: url.standardizedFileURL) { if isActive { load() } }
-        .task(id: epubNavigationTarget?.revision) { applyEPUBNavigationTarget() }
-        .onChange(of: isActive) { _, active in if active && !didLoad { load() } }
+        .task(id: url.standardizedFileURL) { if isActive { await load() } }
+        .task(id: epubNavigationTarget?.revision) {
+            applyEPUBNavigationTarget()
+            requestEPUBFocus()
+        }
+        .onChange(of: isActive) { _, active in
+            guard active else { return }
+            if !didLoad { Task { await load() } }
+            requestEPUBFocus()
+        }
         .background {
             EPUBArrowKeyMonitor(isEnabled: isActive && epubDocument != nil, onNavigateChapter: navigateChapter)
                 .frame(width: 0, height: 0)
         }
     }
 
-    private func load() {
+    @MainActor private func load() async {
         guard !didLoad else { return }
         didLoad = true
         loading = true
@@ -95,11 +103,16 @@ struct WorkspaceReadingPane: View {
         }
         if ext == "epub" || FileManager.default.fileExists(atPath: url.appendingPathComponent("META-INF/container.xml").path) {
             do {
-                let document = try EPUBPackageDocument.open(url)
+                let source = url
+                let document = try await Task.detached(priority: .userInitiated) {
+                    try EPUBPackageDocument.open(source)
+                }.value
+                guard !Task.isCancelled else { return }
                 epubDocument = document
                 onEPUBLoaded(document)
                 onEPUBChapterChanged(chapter)
                 applyEPUBNavigationTarget()
+                requestEPUBFocus()
             }
             catch { onError("无法读取 EPUB：\(error.localizedDescription)") }
             return
@@ -115,6 +128,7 @@ struct WorkspaceReadingPane: View {
         scrollFragment = nil
         navigationRequest += 1
         onEPUBChapterChanged(chapter)
+        requestEPUBFocus()
     }
 
     private func applyEPUBNavigationTarget() {
@@ -124,5 +138,11 @@ struct WorkspaceReadingPane: View {
         scrollFragment = target.fragment
         navigationRequest += 1
         onEPUBChapterChanged(chapter)
+        requestEPUBFocus()
+    }
+
+    private func requestEPUBFocus() {
+        guard isActive, epubDocument != nil else { return }
+        DispatchQueue.main.async { epubFocusRequest += 1 }
     }
 }

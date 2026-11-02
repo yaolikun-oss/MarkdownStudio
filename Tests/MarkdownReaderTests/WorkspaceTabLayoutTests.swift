@@ -205,4 +205,16 @@ struct WorkspaceTabLayoutTests {
         #expect(entries.first?.isDirectory == true)
         #expect(Set(entries.map { $0.url.lastPathComponent }) == Set(["子目录", "notes.md", "book.pdf", "book.epub", "document.docx"]))
     }
+
+    @Test func fileTreeTreatsAnUnpackedEPUBAsAnOpenableDocument() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let unpacked = root.appendingPathComponent("图文书", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: unpacked.appendingPathComponent("META-INF"), withIntermediateDirectories: true)
+        try Data().write(to: unpacked.appendingPathComponent("META-INF/container.xml"))
+
+        let entry = try #require(WorkspaceFileEntry.children(of: root).first)
+        #expect(entry.url.standardizedFileURL.resolvingSymlinksInPath() == unpacked.standardizedFileURL.resolvingSymlinksInPath())
+        #expect(entry.isDirectory == false)
+    }
 }

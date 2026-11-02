@@ -33,7 +33,7 @@ public enum EPUBPackageError: LocalizedError {
     }
 }
 
-public final class EPUBPackageDocument {
+public final class EPUBPackageDocument: @unchecked Sendable {
     public let sourceURL: URL
     public let workingDirectory: URL
     public let title: String
