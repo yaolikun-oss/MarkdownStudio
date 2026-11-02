@@ -14,6 +14,8 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 **0.8.21 Preview** 为每一条 EPUB 目录行建立独立身份：重新关联错误标题时只更新当前目录行，同页的其他章节链接继续保留；同时修复解包 EPUB 尾斜杠导致的重复配套笔记和工作区停止保存，详见 [0.8.21 修复说明](docs/releases/0.8.21-preview.md)。
 
+**0.8.22 Preview** 重构左侧活动栏和上下文面板：空启动只显示打开、创建与最近工程；进入工程后，资源管理器、原文目录、笔记目录和网页收藏随右侧焦点切换。工具栏新增可暂停且不删除链接的“关联跟随”按钮，详见 [0.8.22 界面说明](docs/releases/0.8.22-preview.md)。
+
 **0.8.19 Preview** 修复连续建立第二条章节关联时覆盖第一条、同一 EPUB 页面内多个小节串联的问题，详见 [0.8.19 修复说明](docs/releases/0.8.19-preview.md)。
 
 ## Build and open

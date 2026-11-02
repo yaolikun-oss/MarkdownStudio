@@ -318,6 +318,7 @@ private enum PendingDocumentOperation {
     case closeNote
     case closeWorkspaceTab(UUID)
     case closeReadingSource
+    case closeWorkspace
     case closeWindow
     case terminate
 }
@@ -1068,6 +1069,26 @@ struct ReaderView: View {
         visibleSidebarTabs.contains(sidebarOutlineTab) ? sidebarOutlineTab : .files
     }
 
+    private var focusedContentArea: FocusedWorkspaceArea {
+        focusedWorkspaceArea == .outline ? lastContentFocus : focusedWorkspaceArea
+    }
+
+    private var hasOpenEPUBResource: Bool {
+        epubDocument != nil || workspaceTabs.allTabs.contains {
+            $0.kind == .reading && $0.location?.pathExtension.lowercased() == "epub"
+        }
+    }
+
+    private var showsChapterFollowingControl: Bool {
+        guard selectedFile != nil, hasOpenEPUBResource else { return false }
+        return [.epub, .markdownEditor, .markdownPreview, .markdownReader].contains(focusedContentArea)
+    }
+
+    private func toggleChapterFollowing() {
+        chapterFollowingEnabled.toggle()
+        ReaderActions.chapterFollowingEnabled = chapterFollowingEnabled
+    }
+
     private var epubWidthControlIsActive: Bool {
         focusedWorkspaceArea == .epub && (epubDocument != nil || isEPUBNotebook)
     }
@@ -1130,17 +1151,13 @@ struct ReaderView: View {
     }
 
     private var toolbarTargetsReading: Bool {
-        switch focusedWorkspaceArea == .outline ? lastContentFocus : focusedWorkspaceArea {
+        switch focusedContentArea {
         case .pdf, .epub, .web, .office:
             true
         case .markdownPreview, .markdownEditor, .markdownReader:
             false
         case .outline:
-            switch sidebarOutlineTab {
-            case .reading, .webBookmarks: true
-            case .markdown: false
-            case .files: hasReadingSource && selectedFile == nil
-            }
+            false
         }
     }
 
@@ -1501,63 +1518,140 @@ struct ReaderView: View {
         .overlay(alignment: .trailing) { Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 1) }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if workspaceEntryFlow.showsProjectControls {
-                HStack {
-                    Text("工程工作区").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(action: createWorkspace) {
-                        Image(systemName: "plus.square.on.square").frame(width: 28, height: 26).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("新建 Workspace 工程")
-                    .toolbarHint("新建 Workspace 工程（⇧⌘N）")
-                    Button(action: chooseWorkspaceFile) {
-                        Image(systemName: "square.stack.3d.up").frame(width: 28, height: 26).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("打开 Workspace 工程")
-                    .toolbarHint("打开 Workspace 工程（.mdworkspace）")
-                    Button(action: chooseFolder) { Image(systemName: "folder.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
-                        .buttonStyle(.plain).help("打开工程文件夹").toolbarHint("打开工程文件夹")
-                    Button(action: chooseFile) { Image(systemName: "doc.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
-                        .buttonStyle(.plain).help("导入或打开文件").toolbarHint("导入文件到当前工程，或打开 Markdown")
-                    Button(action: closeSidebarSelection) {
-                        Image(systemName: "xmark.circle").frame(width: 28, height: 26).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canCloseSidebarSelection)
-                    .help(sidebarCloseTitle)
-                    .toolbarHint("\(sidebarCloseTitle)；未保存内容会先询问")
-                    .accessibilityLabel(sidebarCloseTitle)
-                }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
-            } else {
-                HStack {
-                    Text("开始").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(action: chooseFile) {
-                        Label("打开", systemImage: "folder").frame(height: 28).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .help("打开 EPUB、PDF、Word、Pages、Markdown 或 Workspace")
-                    .toolbarHint("打开文件；应用会根据文件类型引导下一步")
-                }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
+    private var sidebarPanelTitle: String {
+        switch displayedSidebarTab {
+        case .files: workspaceEntryFlow.isEmpty ? "开始" : "资源管理器"
+        case .reading:
+            switch focusedContentArea {
+            case .web: "网页目录"
+            case .pdf: "PDF 目录"
+            case .office: "文档目录"
+            default: "原书目录"
             }
+        case .markdown: "笔记目录"
+        case .webBookmarks: "网页收藏"
+        }
+    }
 
+    private var sidebarPanelSubtitle: String? {
+        switch displayedSidebarTab {
+        case .files:
+            return workspaceEntryFlow.isEmpty ? "打开资料或创建学习工程" : workspaceDisplayName
+        case .reading:
+            switch focusedContentArea {
+            case .web: return webBrowser.title
+            case .pdf: return pdfSourceURL?.deletingPathExtension().lastPathComponent
+            case .office: return officeDocumentURL?.deletingPathExtension().lastPathComponent
+            case .epub: return activeWorkspaceEPUBContext?.document.title ?? epubDocument?.title
+            default: return nil
+            }
+        case .markdown:
+            return selectedFile?.deletingPathExtension().lastPathComponent
+        case .webBookmarks:
+            return "长期收藏的网页资料"
+        }
+    }
+
+    private func chapterFollowingToggleButton(showsLabel: Bool = false) -> some View {
+        Button(action: toggleChapterFollowing) {
             HStack(spacing: 4) {
-                Text(displayedSidebarTab.title).font(.system(size: 12, weight: .medium))
-                Spacer(minLength: 0)
-                if displayedSidebarTab == .markdown && !headings.isEmpty {
-                    Button { expandedHeadings = Set(headings.map(\.id)) } label: {
-                        Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10))
-                    }.buttonStyle(.plain).help("展开全部目录").toolbarHint("展开全部目录")
-                    Button { expandedHeadings.removeAll() } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10))
-                    }.buttonStyle(.plain).help("收起子目录").toolbarHint("收起子目录")
+                ZStack {
+                    Image(systemName: "link")
+                    if !chapterFollowingEnabled {
+                        Image(systemName: "slash")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                }
+                if showsLabel {
+                    Text(chapterFollowingEnabled ? "关联跟随" : "跟随已暂停")
+                        .font(.system(size: 10, weight: .medium))
                 }
             }
-            .padding(.horizontal, 12).padding(.top, 13).padding(.bottom, 7)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(chapterFollowingEnabled ? Color.accentColor : Color.secondary)
+            .padding(.horizontal, showsLabel ? 6 : 0)
+            .frame(minWidth: 24, minHeight: 24)
+            .background(chapterFollowingEnabled ? Color.accentColor.opacity(0.12) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(chapterFollowingEnabled
+              ? "关联跟随已开启：点击暂停 EPUB 与 Markdown 的自动跳转"
+              : "关联跟随已暂停：链接仍保留，点击恢复自动跳转")
+        .toolbarHint(chapterFollowingEnabled ? "暂停关联跟随" : "恢复关联跟随")
+        .accessibilityLabel(chapterFollowingEnabled ? "暂停关联跟随" : "恢复关联跟随")
+    }
+
+    @ViewBuilder
+    private var sidebarHeaderActions: some View {
+        switch displayedSidebarTab {
+        case .files:
+            if workspaceEntryFlow.hasProject {
+                Button(action: chooseFile) {
+                    Image(systemName: "doc.badge.plus").frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(workspaceFolders.isEmpty ? "打开文件" : "导入文件到当前工程")
+                Menu {
+                    Button("新建 Workspace…") { createWorkspace() }
+                    Button("打开 Workspace…") { chooseWorkspaceFile() }
+                    Divider()
+                    Button("添加文件夹到工作区…") { chooseAdditionalWorkspaceFolder() }
+                    Button("添加外部文件引用…") { chooseAdditionalWorkspaceFiles() }
+                    Button("保存工作区…") { saveWorkspaceFile() }
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton).fixedSize().help("工程与文件管理")
+            }
+        case .reading:
+            if showsChapterFollowingControl { chapterFollowingToggleButton() }
+        case .markdown:
+            if showsChapterFollowingControl { chapterFollowingToggleButton() }
+            if !headings.isEmpty {
+                Button { expandedHeadings = Set(headings.map(\.id)) } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10)).frame(width: 22, height: 22)
+                }.buttonStyle(.plain).help("展开全部目录")
+                Button { expandedHeadings.removeAll() } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10)).frame(width: 22, height: 22)
+                }.buttonStyle(.plain).help("收起子目录")
+            }
+        case .webBookmarks:
+            Button { ReaderActions.openWebPage() } label: {
+                Image(systemName: "plus").frame(width: 24, height: 24).contentShape(Rectangle())
+            }.buttonStyle(.plain).help("打开网页（⌘L）")
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(sidebarPanelTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    if let subtitle = sidebarPanelSubtitle, !subtitle.isEmpty {
+                        Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                HStack(spacing: 2) { sidebarHeaderActions }
+            }
+            .padding(.leading, 14).padding(.trailing, 10)
+            .padding(.top, 18).padding(.bottom, 10)
+
+            if displayedSidebarTab == .files && workspaceEntryFlow.hasProject {
+                Button(action: requestCloseWorkspace) {
+                    Label("关闭工作区", systemImage: "rectangle.portrait.and.arrow.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10).frame(height: 28)
+                        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 5))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10).padding(.bottom, 6)
+                .help("关闭当前 Workspace；未保存内容会先询问")
+            }
 
             Group {
                 if displayedSidebarTab == .files {
@@ -1573,15 +1667,6 @@ struct ReaderView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .background { Color.clear.contentShape(Rectangle()).onTapGesture { activateWorkspaceArea(.outline) } }
-            Spacer(minLength: 0)
-            HStack(spacing: 7) {
-                Image(systemName: "text.alignleft").font(.system(size: 11))
-                Text(displayedSidebarTab == .files ? (folderURL?.lastPathComponent ?? "文件浏览") : displayedSidebarTab == .webBookmarks ? "网页收藏" : displayedSidebarTab == .reading
-                     ? (webBrowser.currentURL != nil ? "网页" : pdfDocument != nil ? "PDF" : epubDocument != nil ? "EPUB" : "阅读")
-                     : (displayMode == .read ? "可视化编辑" : displayMode == .edit ? "Markdown 源码" : "源码 + 可视化"))
-                    .font(.system(size: 11))
-                Spacer()
-            }.foregroundStyle(.tertiary).padding(.horizontal, 18).padding(.vertical, 14)
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
         .overlay { workspaceFocusRing(focusedWorkspaceArea == .outline) }
@@ -1592,12 +1677,22 @@ struct ReaderView: View {
     @ViewBuilder
     private var fileBrowser: some View {
         if workspaceEntryFlow.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("打开一本书、一份文档或一个 Markdown 文件，应用会自动建立或进入对应的学习工程。")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("从一本书、一份资料或一个学习主题开始。")
+                    .font(.system(size: 12, weight: .medium))
+                Text("打开单个文件可立即阅读；创建 Workspace 后可集中管理多本原书、笔记和网页。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("打开") { chooseFile() }
+                Button { chooseFile() } label: {
+                    Label("打开文件…", systemImage: "doc").frame(maxWidth: .infinity, alignment: .leading)
+                }
                     .buttonStyle(.borderedProminent)
+                Button { createWorkspace() } label: {
+                    Label("新建 Workspace…", systemImage: "folder.badge.plus").frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.bordered)
+                Button { chooseWorkspaceFile() } label: {
+                    Label("打开 Workspace…", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.bordered)
                 if !recentWorkspaces.isEmpty {
                     Divider().padding(.vertical, 4)
                     Text("最近使用").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
@@ -1614,41 +1709,21 @@ struct ReaderView: View {
                 Spacer()
             }
             .padding(16)
+        } else if !workspaceEntryFlow.hasProject {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("尚未创建 Workspace")
+                    .font(.system(size: 12, weight: .medium))
+                Text("当前内容可以临时查看。创建工程后，才能把原书、笔记和其他资料集中到同一目录中。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("新建 Workspace…") { createWorkspace() }
+                    .buttonStyle(.borderedProminent)
+                Button("打开 Workspace…") { chooseWorkspaceFile() }
+                    .buttonStyle(.bordered)
+                Spacer()
+            }.padding(16)
         } else {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(workspaceDisplayName)
-                    .font(.system(size: 11, weight: .semibold)).lineLimit(1)
-                Spacer()
-                Menu {
-                    Button("新建 Workspace…") { createWorkspace() }
-                    Divider()
-                    Button("打开文件…") { chooseFile() }
-                    Button("添加文件夹到工作区…") { chooseAdditionalWorkspaceFolder() }
-                    Button("添加外部文件引用…") { chooseAdditionalWorkspaceFiles() }
-                    Button("打开工作区…") { chooseWorkspaceFile() }
-                    Button("保存工作区…") { saveWorkspaceFile() }
-                } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).fixedSize().help("管理工作区和文件夹")
-            }.padding(.horizontal, 12).padding(.vertical, 6)
-            if !recentWorkspaces.isEmpty {
-                DisclosureGroup("最近使用", isExpanded: $showRecentWorkspaces) {
-                    ScrollView {
-                        LazyVStack(spacing: 2) {
-                            ForEach(recentWorkspaces) { workspace in
-                                Button { openRecentWorkspace(workspace) } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(workspace.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                        Text(workspace.subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 5)
-                                }
-                                .buttonStyle(.plain)
-                                .help([workspace.readingPath, workspace.notePath].compactMap { $0 }.joined(separator: "\n"))
-                            }
-                        }
-                    }.frame(maxHeight: folderURL == nil && workspaceFiles.isEmpty ? .infinity : 180)
-                }.font(.system(size: 11, weight: .medium)).padding(.horizontal, 12).padding(.vertical, 6)
-            }
             if folderURL != nil || !workspaceFiles.isEmpty {
                 ScrollView {
                   LazyVStack(alignment: .leading, spacing: 3) {
@@ -1668,9 +1743,15 @@ struct ReaderView: View {
                   }.padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                Text("选择文件夹以浏览文件")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
-                    .padding(.horizontal, 18).padding(.top, 8)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("这个 Workspace 还没有资料")
+                        .font(.system(size: 12, weight: .medium))
+                    Button("添加文件夹…") { chooseAdditionalWorkspaceFolder() }
+                        .buttonStyle(.bordered)
+                    Button("导入文件…") { chooseFile() }
+                        .buttonStyle(.bordered)
+                    Spacer()
+                }.padding(16)
             }
         }
         }
@@ -2172,6 +2253,9 @@ struct ReaderView: View {
             Text(workspaceTitle)
                 .font(.system(size: 13, weight: .medium)).lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if showsChapterFollowingControl {
+                chapterFollowingToggleButton(showsLabel: true)
+            }
             if let closeTitle = toolbarCloseTitle {
                 Button(action: closeToolbarDocument) {
                     Image(systemName: "xmark.circle")
@@ -6105,6 +6189,7 @@ struct ReaderView: View {
         switch pendingDocumentOperation {
         case .closeNote: saveNote()
         case .closeWorkspaceTab: saveNote()
+        case .closeWorkspace: saveDocument()
         case .closeReadingSource: saveReadingSource()
         default: saveDocument()
         }
@@ -6125,6 +6210,7 @@ struct ReaderView: View {
         case .closeNote: clearNoteDocument()
         case .closeWorkspaceTab(let id): finishClosingWorkspaceTab(id, discard: discardingChanges)
         case .closeReadingSource: clearReadingSource()
+        case .closeWorkspace: finishClosingWorkspace(discardingChanges: discardingChanges)
         case .closeWindow:
             if let window = pendingWindowToClose { finishWindowClose(window) }
             pendingWindowToClose = nil
@@ -6327,6 +6413,51 @@ struct ReaderView: View {
         if selectedFile == nil {
             documentTitle = "选择一个 Markdown 文件开始阅读"
         }
+    }
+
+    private func requestCloseWorkspace() {
+        MarkdownVisualCommandHub.commitActiveEdits {
+            MarkdownSourcePositionHub.flushPendingChanges()
+            if isDirty {
+                pendingDocumentOperation = .closeWorkspace
+                showUnsavedAlert = true
+            } else {
+                finishClosingWorkspace(discardingChanges: false)
+            }
+        }
+    }
+
+    private func finishClosingWorkspace(discardingChanges: Bool) {
+        workspaceRestorationComplete = false
+        detachedWindows.closeAllSilently()
+        for id in webSessions.tabIDs { webSessions.close(id) }
+        _ = documentSessions.removeAll(discardingChanges: discardingChanges)
+        clearNoteDocument()
+        clearReadingSource()
+        workspaceTabs = WorkspaceGridLayout()
+        workspaceNoteIdentity = nil
+        workspaceReadingIdentity = nil
+        workspaceEPUBDocuments = [:]
+        workspaceEPUBChapters = [:]
+        workspaceEPUBNavigationTargets = [:]
+        workspaceMarkdownNavigationTargets = [:]
+        workspaceMarkdownSourceLines = [:]
+        workspaceExplicitHeadings = [:]
+        workspaceResourceFingerprints = [:]
+        folderURL = nil
+        workspaceFolders = []
+        workspaceFiles = []
+        workspaceReadingNotes = []
+        workspaceChapterLinks = []
+        workspaceFileURL = nil
+        currentWorkspacePath = ""
+        workspaceHasMissingReferences = false
+        markdownFiles = []
+        lastFolderPath = ""
+        sidebarOutlineTab = .files
+        lastContentFocus = .markdownReader
+        focusedWorkspaceArea = .markdownReader
+        workspaceRestorationComplete = true
     }
 
     private func insertHorizontalRule() {
