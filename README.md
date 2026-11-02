@@ -8,6 +8,8 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 下一阶段将在此基线上开发 Markdown 笔记章节与 EPUB 章节的显式关联和双向跳转；0.8.16 标签保留为改造前的可回退版本。
 
+正在开发的 **0.8.17 Preview** 已加入 EPUB 章节与 Markdown 标题的稳定关联、双向跳转、`/chapter` 命令及可关闭的章节跟随。使用方法和失效保护见 [0.8.17 版本说明](docs/releases/0.8.17-preview.md)。
+
 ## Build and open
 
 Requires macOS 14 or later and Xcode Command Line Tools.

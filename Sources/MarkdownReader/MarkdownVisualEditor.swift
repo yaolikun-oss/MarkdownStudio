@@ -865,6 +865,7 @@ struct MarkdownVisualEditor: NSViewRepresentable {
       root.addEventListener('focusin', () => bridge.postMessage({kind:'activate'}));
       const slashCommands = [
         ['page','新建子笔记','page 子笔记 页面'], ['text','段落','text plain 段落'],
+        ['chapter','关联当前原文章节','chapter epub 章节 关联'],
         ['h1','一级标题','h1 标题1'], ['h2','二级标题','h2 标题2'], ['h3','三级标题','h3 标题3'],
         ['h4','四级标题','h4 标题4'], ['h5','五级标题','h5 标题5'], ['h6','六级标题','h6 标题6'],
         ['bullet','无序列表','bullet list 无序'], ['num','有序列表','num numbered 有序'],
@@ -881,8 +882,8 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         const block = range.startContainer.parentElement?.closest('[data-visual-index][contenteditable=true]');
         range.deleteContents();
         let token = null;
-        if (item[0] === 'page') {
-          token = '\uE000mdstudio-page-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '\uE001';
+        if (item[0] === 'page' || item[0] === 'chapter') {
+          token = '\uE000mdstudio-' + item[0] + '-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '\uE001';
           const marker = document.createTextNode(token); range.insertNode(marker); range.setStartAfter(marker); range.collapse(true);
         }
         const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);

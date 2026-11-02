@@ -15,17 +15,20 @@ struct WorkspaceDocument: Codable, Equatable {
     var files: [URL] = []
     var layout: WorkspaceGridLayout
     var readingNotes: [WorkspaceReadingNoteLink] = []
+    var chapterLinks: [WorkspaceChapterLink] = []
 
     init(version: Int = Self.currentVersion, folders: [URL], files: [URL] = [],
-         layout: WorkspaceGridLayout, readingNotes: [WorkspaceReadingNoteLink] = []) {
+         layout: WorkspaceGridLayout, readingNotes: [WorkspaceReadingNoteLink] = [],
+         chapterLinks: [WorkspaceChapterLink] = []) {
         self.version = version
         self.folders = folders
         self.files = files
         self.layout = layout
         self.readingNotes = readingNotes
+        self.chapterLinks = chapterLinks
     }
 
-    private enum CodingKeys: String, CodingKey { case version, folders, files, layout, readingNotes }
+    private enum CodingKeys: String, CodingKey { case version, folders, files, layout, readingNotes, chapterLinks }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -34,6 +37,7 @@ struct WorkspaceDocument: Codable, Equatable {
         files = try container.decodeIfPresent([URL].self, forKey: .files) ?? []
         layout = try container.decode(WorkspaceGridLayout.self, forKey: .layout)
         readingNotes = try container.decodeIfPresent([WorkspaceReadingNoteLink].self, forKey: .readingNotes) ?? []
+        chapterLinks = try container.decodeIfPresent([WorkspaceChapterLink].self, forKey: .chapterLinks) ?? []
     }
 
     var isValid: Bool {
@@ -41,7 +45,8 @@ struct WorkspaceDocument: Codable, Equatable {
     }
 
     var missingFiles: [URL] {
-        let resources = folders + files + readingNotes.flatMap { [$0.readingURL, $0.noteURL] } + layout.allTabs.compactMap { tab in
+        let resources = folders + files + readingNotes.flatMap { [$0.readingURL, $0.noteURL] }
+            + chapterLinks.flatMap { [$0.readingURL, $0.noteURL] } + layout.allTabs.compactMap { tab in
             tab.kind == .web ? nil : tab.location
         }
         var seen = Set<String>()

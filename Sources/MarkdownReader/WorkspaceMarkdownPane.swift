@@ -17,6 +17,7 @@ struct WorkspaceMarkdownPane: View {
     let onNativeSlashCommand: (WorkspaceMarkdownSession, String, String?) -> Void
     let onDeleteManagedNote: (WorkspaceMarkdownSession, URL) -> Void
     let onError: (String) -> Void
+    let navigationTarget: WorkspaceMarkdownNavigationTarget?
 
     @State private var blocks: [MarkdownBlock]
     @State private var parsedSource: String
@@ -35,7 +36,8 @@ struct WorkspaceMarkdownPane: View {
          onOpenLink: @escaping (URL) -> Void,
          onNativeSlashCommand: @escaping (WorkspaceMarkdownSession, String, String?) -> Void,
          onDeleteManagedNote: @escaping (WorkspaceMarkdownSession, URL) -> Void,
-         onError: @escaping (String) -> Void) {
+         onError: @escaping (String) -> Void,
+         navigationTarget: WorkspaceMarkdownNavigationTarget? = nil) {
         self.session = session
         self.mode = mode
         self.isActive = isActive
@@ -47,6 +49,7 @@ struct WorkspaceMarkdownPane: View {
         self.onNativeSlashCommand = onNativeSlashCommand
         self.onDeleteManagedNote = onDeleteManagedNote
         self.onError = onError
+        self.navigationTarget = navigationTarget
         _blocks = State(initialValue: [])
         _parsedSource = State(initialValue: "")
     }
@@ -74,6 +77,12 @@ struct WorkspaceMarkdownPane: View {
                 scheduleParse(session.text, delayMilliseconds: 0)
                 if mode == .source { focusRequest += 1 }
             }
+        }
+        .task(id: navigationTarget?.revision) {
+            guard let target = navigationTarget else { return }
+            sourceLine = target.sourceLine
+            sourceLineRequest += 1
+            visualLineRequest += 1
         }
         .onDisappear { parseTask?.cancel() }
     }
@@ -145,4 +154,9 @@ struct WorkspaceMarkdownPane: View {
             parsedSource = text
         }
     }
+}
+
+struct WorkspaceMarkdownNavigationTarget: Equatable {
+    let sourceLine: Int
+    let revision: Int
 }
