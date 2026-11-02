@@ -31,7 +31,7 @@ struct WorkspaceReadingPane: View {
     let initialEPUBDocument: EPUBPackageDocument?
     let epubNavigationTarget: WorkspaceEPUBNavigationTarget?
     let onEPUBLoaded: (EPUBPackageDocument) -> Void
-    let onEPUBChapterChanged: (Int) -> Void
+    let onEPUBChapterChanged: (Int, String?) -> Void
     @Binding var chapter: Int
     @Binding var pdfZoomPercent: Double
     @Binding var officeZoomPercent: Double
@@ -105,7 +105,7 @@ struct WorkspaceReadingPane: View {
            let initialEPUBDocument {
             epubDocument = initialEPUBDocument
             onEPUBLoaded(initialEPUBDocument)
-            onEPUBChapterChanged(chapter)
+            onEPUBChapterChanged(chapter, scrollFragment)
             applyEPUBNavigationTarget()
             requestEPUBFocus()
             return
@@ -124,7 +124,7 @@ struct WorkspaceReadingPane: View {
                 guard !Task.isCancelled else { return }
                 epubDocument = document
                 onEPUBLoaded(document)
-                onEPUBChapterChanged(chapter)
+                onEPUBChapterChanged(chapter, scrollFragment)
                 applyEPUBNavigationTarget()
                 requestEPUBFocus()
             }
@@ -141,7 +141,7 @@ struct WorkspaceReadingPane: View {
         chapter = next
         scrollFragment = nil
         navigationRequest += 1
-        onEPUBChapterChanged(chapter)
+        onEPUBChapterChanged(chapter, nil)
         requestEPUBFocus()
     }
 
@@ -151,7 +151,7 @@ struct WorkspaceReadingPane: View {
         chapter = target.chapterIndex
         scrollFragment = target.fragment
         navigationRequest += 1
-        onEPUBChapterChanged(chapter)
+        onEPUBChapterChanged(chapter, target.fragment)
         requestEPUBFocus()
     }
 

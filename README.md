@@ -10,7 +10,7 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 正在开发的 **0.8.17 Preview** 已加入 EPUB 章节与 Markdown 标题的稳定关联、双向跳转、`/chapter` 命令及可关闭的章节跟随。使用方法和失效保护见 [0.8.17 版本说明](docs/releases/0.8.17-preview.md)。
 
-**0.8.18 Preview** 修复多份章节可能错误关联到 Markdown 第一个标题的问题，详见 [0.8.18 修复说明](docs/releases/0.8.18-preview.md)。
+**0.8.19 Preview** 修复连续建立第二条章节关联时覆盖第一条、同一 EPUB 页面内多个小节串联的问题，详见 [0.8.19 修复说明](docs/releases/0.8.19-preview.md)。
 
 ## Build and open
 

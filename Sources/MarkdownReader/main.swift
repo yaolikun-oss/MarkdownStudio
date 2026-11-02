@@ -512,6 +512,7 @@ struct ReaderView: View {
     @State private var workspaceEPUBNavigationTargets: [String: WorkspaceEPUBNavigationTarget] = [:]
     @State private var workspaceMarkdownNavigationTargets: [String: WorkspaceMarkdownNavigationTarget] = [:]
     @State private var workspaceMarkdownSourceLines: [String: Int] = [:]
+    @State private var workspaceExplicitHeadings: [String: WorkspaceMarkdownHeadingReference] = [:]
     @State private var workspaceChapterLinks: [WorkspaceChapterLink] = []
     @State private var workspaceResourceFingerprints: [String: String] = [:]
     @State private var pendingWorkspaceFileDrop: (url: URL, group: UUID, edge: WorkspaceDropEdge)?
@@ -728,13 +729,17 @@ struct ReaderView: View {
     ) -> WorkspaceChapterLink? {
         guard document.chapters.indices.contains(target.chapterIndex) else { return nil }
         let href = document.chapters[target.chapterIndex].href
-        return workspaceChapterLinks.first {
-            $0.readingURL.standardizedFileURL == readingURL.standardizedFileURL
-                && $0.chapterHref == href && $0.fragment == target.fragment
-        } ?? workspaceChapterLinks.first {
-            $0.readingURL.standardizedFileURL == readingURL.standardizedFileURL
-                && $0.chapterHref == href && $0.fragment == nil
-        }
+        return WorkspaceChapterLinks.link(for: readingURL, chapterHref: href,
+                                          fragment: target.fragment, in: workspaceChapterLinks)
+    }
+
+    private func currentWorkspaceEPUBLink(
+        _ context: (url: URL, document: EPUBPackageDocument, chapter: Int)
+    ) -> WorkspaceChapterLink? {
+        let target = workspaceEPUBNavigationTargets[context.url.path]
+        let fragment = target?.chapterIndex == context.chapter ? target?.fragment : nil
+        return chapterLink(for: context.url, document: context.document,
+                           target: (context.chapter, fragment))
     }
 
     private func chapterLink(for heading: MarkdownBlock) -> WorkspaceChapterLink? {
@@ -757,18 +762,24 @@ struct ReaderView: View {
     private func currentMarkdownHeading() -> MarkdownBlock? {
         let noteURL = activeWorkspaceMarkdownURL ?? selectedFile
         let noteKey = noteURL?.standardizedFileURL.path
-        let actualLine: Int
+        let selection: NSRange?
+        let sourceText: String
         if let noteURL, let session = documentSessions.session(for: noteURL) {
             let preferredSelection = session.position.activeMode == .visual
                 ? (session.position.selection ?? session.selection) : session.selection
-            let location = min(max(0, preferredSelection.location), (session.text as NSString).length)
-            actualLine = (session.text as NSString).substring(to: location)
-                .components(separatedBy: "\n").count
+            selection = preferredSelection
+            sourceText = session.text
         } else {
-            actualLine = noteKey.flatMap { workspaceMarkdownSourceLines[$0] } ?? synchronizedSourceLine
+            selection = nil
+            sourceText = source
         }
-        return headings.last { $0.headingLevel != nil && $0.sourceLine <= actualLine }
-            ?? headings.first(where: { $0.headingLevel != nil })
+        if let noteKey, let reference = workspaceExplicitHeadings[noteKey],
+           let explicitHeading = reference.resolve(in: MarkdownBlock.parse(sourceText)) {
+            return explicitHeading
+        }
+        return WorkspaceMarkdownHeadingResolver.heading(
+            in: headings, source: sourceText, selection: selection,
+            fallbackSourceLine: noteKey.flatMap { workspaceMarkdownSourceLines[$0] } ?? synchronizedSourceLine)
     }
 
     private func bindCurrentChapter(to heading: MarkdownBlock? = nil) {
@@ -829,6 +840,11 @@ struct ReaderView: View {
         }
         let reading = readingURL.standardizedFileURL
         let note = noteURL.standardizedFileURL
+        guard let headingReference = WorkspaceMarkdownHeadingReference(
+            heading: heading, in: MarkdownBlock.parse(session.text)) else {
+            saveError = "无法确认要关联的 Markdown 标题，请重新选择标题。"
+            return
+        }
         Task { @MainActor in
             do {
                 let fingerprint = try await Task.detached(priority: .utility) {
@@ -838,9 +854,7 @@ struct ReaderView: View {
                 let currentBlocks = await Task.detached(priority: .userInitiated) {
                     MarkdownBlock.parse(latestText)
                 }.value
-                guard let currentHeading = currentBlocks.first(where: {
-                    $0.headingLevel == level && $0.sourceLine == heading.sourceLine && $0.title == heading.title
-                }) else {
+                guard let currentHeading = headingReference.resolve(in: currentBlocks) else {
                     saveError = "计算原书标识期间笔记标题发生了变化，请重新关联。"
                     return
                 }
@@ -851,15 +865,12 @@ struct ReaderView: View {
                     synchronizeActiveWorkspaceSession(session)
                 }
                 let href = document.chapters[target.chapterIndex].href
-                workspaceChapterLinks.removeAll {
-                    ($0.readingURL.standardizedFileURL == reading && $0.chapterHref == href && $0.fragment == target.fragment)
-                        || ($0.noteURL.standardizedFileURL == note && $0.markerID == markerID)
-                }
-                workspaceChapterLinks.append(WorkspaceChapterLink(
+                let newLink = WorkspaceChapterLink(
                     readingURL: reading, readingFingerprint: fingerprint, chapterHref: href,
                     fragment: target.fragment, chapterTitle: title, noteURL: note,
                     markerID: markerID, headingTitle: currentHeading.title ?? "未命名标题",
-                    headingLevel: level))
+                    headingLevel: level)
+                workspaceChapterLinks = WorkspaceChapterLinks.upserting(newLink, into: workspaceChapterLinks)
                 workspaceResourceFingerprints[reading.path] = fingerprint
                 refreshOutlineImmediately(for: session)
             } catch {
@@ -880,12 +891,12 @@ struct ReaderView: View {
         }
     }
 
-    private func followLinkedNote(for readingURL: URL, document: EPUBPackageDocument?, chapter: Int) {
+    private func followLinkedNote(for readingURL: URL, document: EPUBPackageDocument?, chapter: Int,
+                                  fragment: String?) {
         guard chapterFollowingEnabled, let document, document.chapters.indices.contains(chapter) else { return }
         let href = document.chapters[chapter].href
-        guard let link = workspaceChapterLinks.first(where: {
-            $0.readingURL.standardizedFileURL == readingURL.standardizedFileURL && $0.chapterHref == href
-        }) else { return }
+        guard let link = WorkspaceChapterLinks.link(for: readingURL, chapterHref: href,
+                                                    fragment: fragment, in: workspaceChapterLinks) else { return }
         navigateToLinkedNote(link, activate: false)
     }
 
@@ -2718,6 +2729,7 @@ struct ReaderView: View {
             workspaceNoteIdentity = nil; workspaceReadingIdentity = nil
             workspaceMarkdownNavigationTargets = [:]
             workspaceMarkdownSourceLines = [:]
+            workspaceExplicitHeadings = [:]
             workspaceFolders = document.folders.filter { FileManager.default.fileExists(atPath: $0.path) }
             workspaceFiles = document.files.filter { FileManager.default.fileExists(atPath: $0.path) }
             workspaceReadingNotes = document.readingNotes
@@ -2870,9 +2882,10 @@ struct ReaderView: View {
                         workspaceEPUBDocuments[epubKey] = document
                         if activeWorkspaceReadingURL?.path == epubKey { epubDocument = document }
                     },
-                    onEPUBChapterChanged: { chapter in
+                    onEPUBChapterChanged: { chapter, fragment in
                         workspaceEPUBChapters[epubKey] = chapter
-                        followLinkedNote(for: url, document: workspaceEPUBDocuments[epubKey], chapter: chapter)
+                        followLinkedNote(for: url, document: workspaceEPUBDocuments[epubKey],
+                                         chapter: chapter, fragment: fragment)
                     },
                     chapter: workspaceEPUBChapterBinding(for: url),
                     pdfZoomPercent: $pdfZoomPercent,
@@ -2930,6 +2943,7 @@ struct ReaderView: View {
         editorSelection = session.selection
         visualScrollState = session.position
         let key = session.url.standardizedFileURL.path
+        workspaceExplicitHeadings.removeValue(forKey: key)
         let activeSelection = session.position.activeMode == .visual
             ? (session.position.selection ?? session.selection) : session.selection
         let selectionLocation = min(max(0, activeSelection.location), (session.text as NSString).length)
@@ -3839,6 +3853,10 @@ struct ReaderView: View {
         scrollTarget = id
         scrollRequest += 1
         if let heading = headings.first(where: { $0.id == id }) {
+            if let noteURL = activeWorkspaceMarkdownURL ?? selectedFile,
+               let reference = WorkspaceMarkdownHeadingReference(heading: heading, in: headings) {
+                workspaceExplicitHeadings[noteURL.standardizedFileURL.path] = reference
+            }
             synchronizedSourceLine = heading.sourceLine
             sourceLineRequest += 1
             visualSourceLineRequest += 1
@@ -4082,6 +4100,7 @@ struct ReaderView: View {
         workspaceChapterLinks = []
         workspaceMarkdownNavigationTargets = [:]
         workspaceMarkdownSourceLines = [:]
+        workspaceExplicitHeadings = [:]
         workspaceResourceFingerprints = [:]
         workspaceFileURL = nil
         workspaceHasMissingReferences = false
@@ -4237,6 +4256,7 @@ struct ReaderView: View {
         workspaceEPUBNavigationTargets.removeValue(forKey: canonical.path)
         workspaceMarkdownNavigationTargets.removeValue(forKey: canonical.path)
         workspaceMarkdownSourceLines.removeValue(forKey: canonical.path)
+        workspaceExplicitHeadings.removeValue(forKey: canonical.path)
         workspaceResourceFingerprints.removeValue(forKey: canonical.path)
         workspaceFileTreeRevision += 1
     }
@@ -4659,11 +4679,7 @@ struct ReaderView: View {
         ReaderActions.bindCurrentChapterHandler = { bindCurrentChapter() }
         ReaderActions.openLinkedNoteHandler = {
             guard let context = activeWorkspaceEPUBContext,
-                  context.document.chapters.indices.contains(context.chapter),
-                  let link = workspaceChapterLinks.first(where: {
-                      $0.readingURL.standardizedFileURL == context.url.standardizedFileURL
-                          && $0.chapterHref == context.document.chapters[context.chapter].href
-                  }) else {
+                  let link = currentWorkspaceEPUBLink(context) else {
                 saveError = "当前 EPUB 章节还没有关联笔记。"
                 return
             }
@@ -4678,11 +4694,7 @@ struct ReaderView: View {
         }
         ReaderActions.removeCurrentChapterLinkHandler = {
             if let context = activeWorkspaceEPUBContext,
-               context.document.chapters.indices.contains(context.chapter),
-               let link = workspaceChapterLinks.first(where: {
-                   $0.readingURL.standardizedFileURL == context.url.standardizedFileURL
-                       && $0.chapterHref == context.document.chapters[context.chapter].href
-               }) {
+               let link = currentWorkspaceEPUBLink(context) {
                 removeChapterLink(link)
             } else if let heading = currentMarkdownHeading(), let link = chapterLink(for: heading) {
                 removeChapterLink(link)
@@ -6140,6 +6152,7 @@ struct ReaderView: View {
         workspaceChapterLinks = []
         workspaceMarkdownNavigationTargets = [:]
         workspaceMarkdownSourceLines = [:]
+        workspaceExplicitHeadings = [:]
         workspaceResourceFingerprints = [:]
         workspaceFileURL = nil
         currentWorkspacePath = ""

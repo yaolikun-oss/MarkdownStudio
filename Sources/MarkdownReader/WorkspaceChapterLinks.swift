@@ -30,6 +30,75 @@ struct WorkspaceChapterLink: Codable, Equatable, Identifiable {
     }
 }
 
+enum WorkspaceChapterLinks {
+    static func upserting(_ link: WorkspaceChapterLink, into links: [WorkspaceChapterLink]) -> [WorkspaceChapterLink] {
+        links.filter { existing in
+            !sameReadingTarget(existing, link) && !sameNoteMarker(existing, link)
+        } + [link]
+    }
+
+    static func link(for readingURL: URL, chapterHref: String, fragment: String?,
+                     in links: [WorkspaceChapterLink]) -> WorkspaceChapterLink? {
+        links.first {
+            $0.readingURL.standardizedFileURL == readingURL.standardizedFileURL
+                && $0.chapterHref == chapterHref && $0.fragment == fragment
+        }
+    }
+
+    static func link(for noteURL: URL, markerID: UUID,
+                     in links: [WorkspaceChapterLink]) -> WorkspaceChapterLink? {
+        links.first {
+            $0.noteURL.standardizedFileURL == noteURL.standardizedFileURL && $0.markerID == markerID
+        }
+    }
+
+    private static func sameReadingTarget(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {
+        lhs.readingURL.standardizedFileURL == rhs.readingURL.standardizedFileURL
+            && lhs.chapterHref == rhs.chapterHref && lhs.fragment == rhs.fragment
+    }
+
+    private static func sameNoteMarker(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {
+        lhs.noteURL.standardizedFileURL == rhs.noteURL.standardizedFileURL && lhs.markerID == rhs.markerID
+    }
+}
+
+enum WorkspaceMarkdownHeadingResolver {
+    static func heading(in blocks: [MarkdownBlock], source: String, selection: NSRange?,
+                        fallbackSourceLine: Int) -> MarkdownBlock? {
+        let line: Int
+        if let selection {
+            let text = source as NSString
+            let location = min(max(0, selection.location), text.length)
+            line = text.substring(to: location).components(separatedBy: "\n").count
+        } else {
+            line = fallbackSourceLine
+        }
+        return blocks.last { $0.headingLevel != nil && $0.sourceLine <= line }
+            ?? blocks.first(where: { $0.headingLevel != nil })
+    }
+}
+
+struct WorkspaceMarkdownHeadingReference {
+    let level: Int
+    let title: String
+    let ordinal: Int
+
+    init?(heading: MarkdownBlock, in blocks: [MarkdownBlock]) {
+        guard let level = heading.headingLevel, let title = heading.title else { return nil }
+        let matches = blocks.filter { $0.headingLevel == level && $0.title == title }
+        guard let ordinal = matches.firstIndex(where: { $0.sourceLine == heading.sourceLine }) else { return nil }
+        self.level = level
+        self.title = title
+        self.ordinal = ordinal
+    }
+
+    func resolve(in blocks: [MarkdownBlock]) -> MarkdownBlock? {
+        let matches = blocks.filter { $0.headingLevel == level && $0.title == title }
+        guard matches.indices.contains(ordinal) else { return nil }
+        return matches[ordinal]
+    }
+}
+
 enum WorkspaceChapterMarker {
     static func text(_ id: UUID) -> String { "<!-- mdstudio-chapter-link:\(id.uuidString.lowercased()) -->" }
 
