@@ -628,6 +628,49 @@ struct ReaderView: View {
               let tab = group.tabs.first(where: { $0.id == selected && $0.kind == .reading }) else { return nil }
         return tab.location?.standardizedFileURL
     }
+
+    private var activeWorkspaceTab: WorkspaceTab? {
+        guard let groupID = workspaceTabs.activeGroup,
+              let group = workspaceTabs.groups.first(where: { $0.id == groupID }),
+              let selected = group.selected else { return nil }
+        return group.tabs.first(where: { $0.id == selected })
+    }
+
+    private func readingArea(for url: URL) -> FocusedWorkspaceArea {
+        if url.pathExtension.lowercased() == "pdf" { return .pdf }
+        if OfficeReadingFormat.supports(url) { return .office }
+        return .epub
+    }
+
+    private func workspaceTab(_ tab: WorkspaceTab, matches area: FocusedWorkspaceArea) -> Bool {
+        switch area {
+        case .web:
+            return tab.kind == .web
+        case .pdf, .epub, .office:
+            guard tab.kind == .reading, let url = tab.location else { return false }
+            return readingArea(for: url) == area
+        case .markdownEditor:
+            return tab.kind == .source
+        case .markdownPreview, .markdownReader:
+            return tab.kind == .visual
+        case .outline:
+            return false
+        }
+    }
+
+    private func workspaceTab(matching area: FocusedWorkspaceArea) -> WorkspaceTab? {
+        if let activeWorkspaceTab, workspaceTab(activeWorkspaceTab, matches: area) {
+            return activeWorkspaceTab
+        }
+        // In a split layout, prefer another visible selected tab before an
+        // inactive tab hidden behind a tab strip.
+        for group in workspaceTabs.groups {
+            guard let selected = group.selected,
+                  let tab = group.tabs.first(where: { $0.id == selected }) else { continue }
+            if workspaceTab(tab, matches: area) { return tab }
+        }
+        return workspaceTabs.allTabs.first(where: { workspaceTab($0, matches: area) })
+    }
     private var activeWorkspaceEPUBContext: (url: URL, document: EPUBPackageDocument, chapter: Int)? {
         guard let url = activeWorkspaceReadingURL else { return nil }
         let key = url.path
@@ -2477,14 +2520,16 @@ struct ReaderView: View {
                     annotationFontSize: annotationFontSize, annotationFontFamily: annotationFontFamily,
                     annotationTextColorHex: annotationTextColorHex, backgroundHex: readerBackgroundHex,
                     lineHeight: lineHeight, onActivate: {
+                        workspaceTabs.select(tab.id)
                         activateWorkspaceReading(url)
-                        if url.pathExtension.lowercased() == "pdf" { activateWorkspaceArea(.pdf) }
-                        else if OfficeReadingFormat.supports(url) { activateWorkspaceArea(.office) }
-                        else { activateWorkspaceArea(.epub) }
+                        activateWorkspaceArea(readingArea(for: url))
                     },
                     onError: { saveError = $0 },
                     epubNavigationTarget: workspaceEPUBNavigationTargets[epubKey],
-                    onEPUBLoaded: { document in workspaceEPUBDocuments[epubKey] = document },
+                    onEPUBLoaded: { document in
+                        workspaceEPUBDocuments[epubKey] = document
+                        if activeWorkspaceReadingURL?.path == epubKey { epubDocument = document }
+                    },
                     onEPUBChapterChanged: { chapter in workspaceEPUBChapters[epubKey] = chapter },
                     chapter: workspaceEPUBChapterBinding(for: url),
                     pdfZoomPercent: $pdfZoomPercent,
@@ -2502,7 +2547,10 @@ struct ReaderView: View {
                     }),
                     appearance: tab.kind == .source ? sourceStyle : previewStyle,
                     syntaxHighlighting: sourceSyntaxHighlighting,
-                    onActivate: activateWorkspaceMarkdownSession,
+                    onActivate: { session, mode in
+                        workspaceTabs.select(tab.id)
+                        activateWorkspaceMarkdownSession(session, mode: mode)
+                    },
                     onTextChange: synchronizeActiveWorkspaceSession,
                     onOpenLink: openMarkdownReference,
                     onNativeSlashCommand: applyWorkspaceSlashCommand,
@@ -2564,7 +2612,10 @@ struct ReaderView: View {
             pdfSourceURL = nil
         } else if ext == "epub" || isUnpackedEPUBDirectory(url) {
             if epubDocument?.sourceURL.standardizedFileURL != url.standardizedFileURL {
-                epubDocument = try? EPUBPackageDocument.open(url)
+                // WorkspaceReadingPane opens EPUBs off the main thread. Reuse
+                // that immutable result for the outline instead of parsing the
+                // book synchronously whenever focus moves between reading tabs.
+                epubDocument = workspaceEPUBDocuments[url.standardizedFileURL.path]
             }
             officeDocumentURL = nil
             pdfDocument = nil
@@ -2716,7 +2767,11 @@ struct ReaderView: View {
             isBookmarked: webBookmarks.contains(where: { $0.urlString == session.currentURL?.absoluteString }),
             onBookmark: { webSessions.activate(id); beginBookmarkCurrentPage() },
             onClip: { clip in webSessions.activate(id); appendWebClip(clip) },
-            onActivate: { webSessions.activate(id); activateWorkspaceArea(.web) })
+            onActivate: {
+                workspaceTabs.select(id)
+                webSessions.activate(id)
+                activateWorkspaceArea(.web)
+            })
     }
 
     private var parallelDocumentPane: some View {
@@ -5310,16 +5365,12 @@ struct ReaderView: View {
         focusedWorkspaceArea = area
         if area != .outline { lastContentFocus = area }
         if [.pdf, .epub, .office, .web].contains(area) { lastReadingFocus = area }
-        let tabID: UUID?
-        switch area {
-        case .web: tabID = webSessions.activeID
-        case .pdf, .epub, .office: tabID = workspaceTabs.allTabs.first(where: { $0.kind == .reading })?.id
-        case .markdownEditor: tabID = workspaceTabs.allTabs.first(where: { $0.kind == .source })?.id
-        case .markdownPreview, .markdownReader: tabID = workspaceTabs.allTabs.first(where: { $0.kind == .visual })?.id
-        case .outline: tabID = nil
+        if area != .outline {
+            sidebarOutlineTab = [.pdf, .epub, .office, .web].contains(area) ? .reading : .markdown
         }
-        if let tabID, workspaceTabs.groups.contains(where: { $0.selected == tabID && $0.id != workspaceTabs.activeGroup }) {
-            workspaceTabs.select(tabID)
+        if let tab = workspaceTab(matching: area),
+           workspaceTabs.groups.contains(where: { $0.selected == tab.id && $0.id != workspaceTabs.activeGroup }) {
+            workspaceTabs.select(tab.id)
         }
         switch area {
         case .pdf:

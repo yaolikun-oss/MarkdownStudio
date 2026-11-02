@@ -60,7 +60,8 @@ struct WorkspaceReadingPane: View {
                     backgroundColorHex: backgroundHex, lineHeight: lineHeight,
                     scrollFragment: scrollFragment, scrollRequest: navigationRequest, annotations: [],
                     annotationJumpID: nil, annotationJumpRequest: 0, savedPosition: nil,
-                    positionRestoreRequest: 0, focusRequest: epubFocusRequest, onActivate: onActivate,
+                    positionRestoreRequest: 0, isActive: isActive,
+                    focusRequest: epubFocusRequest, onActivate: onActivate,
                     onNavigateChapter: navigateChapter, onTextSelection: { _ in },
                     onEditAnnotation: { _ in }, onDeleteAnnotation: { _ in },
                     onReadPosition: { _, _ in }, onBodyChange: { _ in })

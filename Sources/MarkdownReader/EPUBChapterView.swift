@@ -36,6 +36,9 @@ struct EPUBChapterView: NSViewRepresentable {
     let annotationJumpRequest: Int
     let savedPosition: SavedReadingPosition?
     let positionRestoreRequest: Int
+    /// Hidden EPUB tabs stay alive to preserve their scroll position. Only the
+    /// active tab may register itself as the workspace keyboard target.
+    var isActive: Bool = true
     /// Changes only when the active reading pane explicitly wants keyboard
     /// focus. This avoids background/retained readers stealing focus during
     /// ordinary SwiftUI updates while still restoring arrow navigation after
@@ -60,6 +63,7 @@ struct EPUBChapterView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "epubAnnotationEdit")
         configuration.userContentController.add(context.coordinator, name: "epubAnnotationDelete")
         configuration.userContentController.add(context.coordinator, name: "epubReadingPosition")
+        configuration.userContentController.add(context.coordinator, name: "epubChapterNavigation")
         let editorScript = WKUserScript(source: """
         (() => {
           const enable = () => {
@@ -76,6 +80,9 @@ struct EPUBChapterView: NSViewRepresentable {
         configuration.userContentController.addUserScript(editorScript)
         let selectionScript = WKUserScript(source: Self.selectionScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         configuration.userContentController.addUserScript(selectionScript)
+        let navigationScript = WKUserScript(source: Self.chapterNavigationScript,
+                                            injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        configuration.userContentController.addUserScript(navigationScript)
         let webView = EPUBReaderWebView(frame: .zero, configuration: configuration)
         webView.onActivate = onActivate
         webView.navigationDelegate = context.coordinator
@@ -91,12 +98,13 @@ struct EPUBChapterView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
-        WorkspaceKeyboardFocus.readingView = webView
+        if isActive { WorkspaceKeyboardFocus.readingView = webView }
         context.coordinator.onBodyChange = onBodyChange
         context.coordinator.onTextSelection = onTextSelection
         context.coordinator.onEditAnnotation = onEditAnnotation
         context.coordinator.onDeleteAnnotation = onDeleteAnnotation
         context.coordinator.onReadPosition = onReadPosition
+        context.coordinator.onNavigateChapter = onNavigateChapter
         context.coordinator.editable = editable
         (webView as? EPUBReaderWebView)?.onNavigateChapter = onNavigateChapter
         (webView as? EPUBReaderWebView)?.onActivate = onActivate
@@ -181,6 +189,23 @@ struct EPUBChapterView: NSViewRepresentable {
       document.addEventListener('mouseup', schedule);
       document.addEventListener('keyup', schedule);
       document.addEventListener('selectionchange', schedule);
+    })();
+    """
+
+    /// WebKit's internal content view can consume arrow events before the
+    /// enclosing NSView receives them. Keep an in-page route as a fallback so
+    /// chapter navigation remains available whenever the EPUB itself has focus.
+    private static let chapterNavigationScript = """
+    (() => {
+      document.addEventListener('keydown', event => {
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+        if (document.body?.isContentEditable) return;
+        const offset = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+        if (!offset) return;
+        event.preventDefault();
+        event.stopPropagation();
+        window.webkit.messageHandlers.epubChapterNavigation.postMessage(offset);
+      }, true);
     })();
     """
 
@@ -269,6 +294,7 @@ struct EPUBChapterView: NSViewRepresentable {
         var onEditAnnotation: (String) -> Void = { _ in }
         var onDeleteAnnotation: (String) -> Void = { _ in }
         var onReadPosition: (String, Double) -> Void = { _, _ in }
+        var onNavigateChapter: (Int) -> Void = { _ in }
         var renderKey: String?
         var editable = false
         var pendingFragment: String?
@@ -314,6 +340,10 @@ struct EPUBChapterView: NSViewRepresentable {
                       let href = value["href"] as? String,
                       let fraction = value["fraction"] as? Double {
                 onReadPosition(href, min(1, max(0, fraction)))
+            } else if message.name == "epubChapterNavigation",
+                      let offset = message.body as? NSNumber {
+                let value = offset.intValue
+                if value == -1 || value == 1 { onNavigateChapter(value) }
             }
         }
 
@@ -345,6 +375,7 @@ struct EPUBChapterView: NSViewRepresentable {
             hasPendingFocusRequest = false
             DispatchQueue.main.async { [weak webView, weak window] in
                 guard let webView, let window, webView.window === window else { return }
+                WorkspaceKeyboardFocus.readingView = webView
                 window.makeFirstResponder(webView)
             }
         }
@@ -565,6 +596,7 @@ private final class EPUBReaderWebView: WKWebView {
     var onActivate: (() -> Void)?
 
     override func mouseDown(with event: NSEvent) {
+        WorkspaceKeyboardFocus.readingView = self
         WorkspaceMouseDownHandling.perform(
             nativeMouseDown: { super.mouseDown(with: event) },
             activateWorkspace: { [weak self] in self?.onActivate?() }
