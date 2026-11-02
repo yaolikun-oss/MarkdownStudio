@@ -2,6 +2,12 @@
 
 A quiet Markdown reader and source editor for macOS. It takes visual cues from MarkDown One's restrained interface without copying its full publishing workflow.
 
+## 当前 Mac 工作区基线
+
+当前冻结版本为 **0.8.16 Preview**。这一版本将一本书或一个学习主题作为 Workspace 工程管理，支持在同一工作区内打开多本 EPUB、PDF、Office 阅读资料、多份 Markdown 笔记和网页，并通过标签、分屏和停靠布局组合使用。详细功能、安装包校验值、已验证内容和当前限制见 [0.8.16 版本说明](docs/releases/0.8.16-preview.md)。
+
+下一阶段将在此基线上开发 Markdown 笔记章节与 EPUB 章节的显式关联和双向跳转；0.8.16 标签保留为改造前的可回退版本。
+
 ## Build and open
 
 Requires macOS 14 or later and Xcode Command Line Tools.
