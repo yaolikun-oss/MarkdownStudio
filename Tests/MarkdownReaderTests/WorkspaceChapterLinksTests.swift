@@ -57,7 +57,7 @@ import Testing
         }
     }
 
-    @Test func changingOneAssociationDoesNotDeleteUnrelatedAssociations() {
+    @Test func citingTheSameReadingTargetFromAnotherHeadingKeepsBothAssociations() {
         let first = makeLink(section: 10, href: "Text/one.xhtml", fragment: nil, marker: UUID())
         let second = makeLink(section: 20, href: "Text/two.xhtml", fragment: nil, marker: UUID())
         let replacement = makeLink(section: 30, href: "Text/two.xhtml", fragment: nil, marker: UUID())
@@ -65,10 +65,29 @@ import Testing
         links = WorkspaceChapterLinks.upserting(second, into: links)
         links = WorkspaceChapterLinks.upserting(replacement, into: links)
 
-        #expect(links.count == 2)
+        #expect(links.count == 3)
         #expect(links.contains(where: { $0.id == first.id }))
-        #expect(!links.contains(where: { $0.id == second.id }))
+        #expect(links.contains(where: { $0.id == second.id }))
         #expect(links.contains(where: { $0.id == replacement.id }))
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/two.xhtml",
+                                          fragment: nil, in: links)?.id == replacement.id)
+        #expect(WorkspaceChapterLinks.link(for: note, markerID: second.markerID,
+                                          in: links)?.id == second.id)
+    }
+
+    @Test func movingOneNoteMarkerToAnotherChapterOnlyReplacesThatMarker() {
+        let marker = UUID()
+        let first = makeLink(section: 10, href: "Text/one.xhtml", fragment: nil, marker: marker)
+        let unrelated = makeLink(section: 20, href: "Text/two.xhtml", fragment: nil, marker: UUID())
+        let moved = makeLink(section: 10, href: "Text/three.xhtml", fragment: "new", marker: marker)
+        var links = WorkspaceChapterLinks.upserting(first, into: [])
+        links = WorkspaceChapterLinks.upserting(unrelated, into: links)
+        links = WorkspaceChapterLinks.upserting(moved, into: links)
+
+        #expect(links.count == 2)
+        #expect(!links.contains(where: { $0.id == first.id }))
+        #expect(links.contains(where: { $0.id == unrelated.id }))
+        #expect(links.contains(where: { $0.id == moved.id }))
     }
 
     @Test func explicitOutlineHeadingOverridesAStaleEditorCaret() throws {

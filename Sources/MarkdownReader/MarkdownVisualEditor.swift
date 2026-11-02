@@ -159,6 +159,7 @@ struct MarkdownVisualEditor: NSViewRepresentable {
     let sourceLineRequest: Int
     let restoreRequest: Int
     let scrollState: MarkdownVisualScrollState
+    var isActive: Bool = true
     let onSourceLineChange: (Int) -> Void
     let onActivate: () -> Void
     let onImagePaste: (NSPasteboard) -> String?
@@ -197,17 +198,13 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         }
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
-        MarkdownVisualCommandHub.flushActiveEdits = { [weak coordinator = context.coordinator, weak webView] completion in
-            guard let coordinator, let webView else { completion(); return }
-            coordinator.flushPendingEdits(in: webView, completion: completion)
-        }
+        if isActive { Self.registerCommandHub(webView, coordinator: context.coordinator) }
         context.coordinator.onSourceLineChange = onSourceLineChange
         context.coordinator.scrollState = scrollState
         if let scrollView = Self.findScrollView(in: webView) {
             scrollView.contentView.postsBoundsChangedNotifications = true
             context.coordinator.observe(scrollView)
         }
-        MarkdownVisualCommandHub.activeWebView = webView
         return webView
     }
 
@@ -231,6 +228,12 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         coordinator.onDeleteManagedNote = onDeleteManagedNote
         coordinator.onSourceLineChange = onSourceLineChange
         coordinator.scrollState = scrollState
+        if isActive {
+            Self.registerCommandHub(webView, coordinator: coordinator)
+        } else if MarkdownVisualCommandHub.activeWebView === webView {
+            MarkdownVisualCommandHub.activeWebView = nil
+            MarkdownVisualCommandHub.flushActiveEdits = nil
+        }
         let path = baseURL?.standardizedFileURL.path ?? ""
         let styleKey = "\(readerWidth)|\(headingStyles)|\(bodyColorHex)|\(readerBackgroundHex)|\(strongColorHex)|\(strongSize)|\(strongFamily)|\(bodySize)|\(bodyFamily)|\(lineHeight)|\(paragraphSpacing)|\(path)"
         let ownChange = source == coordinator.lastEmittedSource
@@ -282,6 +285,14 @@ struct MarkdownVisualEditor: NSViewRepresentable {
         coordinator.stopObserving()
         coordinator.cleanup()
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "visualEdit", contentWorld: contentWorld)
+    }
+
+    private static func registerCommandHub(_ webView: WKWebView, coordinator: Coordinator) {
+        MarkdownVisualCommandHub.activeWebView = webView
+        MarkdownVisualCommandHub.flushActiveEdits = { [weak coordinator, weak webView] completion in
+            guard let coordinator, let webView else { completion(); return }
+            coordinator.flushPendingEdits(in: webView, completion: completion)
+        }
     }
 
     private static func findScrollView(in view: NSView) -> NSScrollView? {

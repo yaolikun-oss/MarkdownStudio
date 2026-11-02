@@ -3,6 +3,14 @@ import Testing
 @testable import MarkdownReader
 
 struct WorkspaceTabLayoutTests {
+    @Test func pendingEPUBRestoreKeepsItsReadingTabUntilParsingFinishes() {
+        #expect(!WorkspaceReadingRestoration.shouldDiscardReadingTabs(
+            hasLoadedDocument: false, isConvertingKindle: false, isOpeningEPUB: true, hasPendingPDF: false))
+        #expect(WorkspaceReadingRestoration.shouldDiscardReadingTabs(
+            hasLoadedDocument: false, isConvertingKindle: false, isOpeningEPUB: false, hasPendingPDF: false))
+        #expect(!WorkspaceReadingRestoration.shouldDiscardReadingTabs(
+            hasLoadedDocument: true, isConvertingKindle: false, isOpeningEPUB: false, hasPendingPDF: false))
+    }
     @Test @MainActor func repeatedDockingIgnoresRemovedGroupsAndTargetsHeaderOrNearestSide() throws {
         let frames = WorkspaceGroupFrames()
         var layout = WorkspaceGridLayout()

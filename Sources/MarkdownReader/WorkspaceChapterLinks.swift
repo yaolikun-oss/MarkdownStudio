@@ -33,13 +33,17 @@ struct WorkspaceChapterLink: Codable, Equatable, Identifiable {
 enum WorkspaceChapterLinks {
     static func upserting(_ link: WorkspaceChapterLink, into links: [WorkspaceChapterLink]) -> [WorkspaceChapterLink] {
         links.filter { existing in
-            !sameReadingTarget(existing, link) && !sameNoteMarker(existing, link)
+            // One EPUB target may legitimately be cited by several note
+            // headings. Some books also expose several TOC rows that resolve
+            // to the same XHTML/fragment. Only replacing the same note marker
+            // is an edit; a second citation must not erase the first one.
+            !sameNoteMarker(existing, link)
         } + [link]
     }
 
     static func link(for readingURL: URL, chapterHref: String, fragment: String?,
                      in links: [WorkspaceChapterLink]) -> WorkspaceChapterLink? {
-        links.first {
+        links.last {
             $0.readingURL.standardizedFileURL == readingURL.standardizedFileURL
                 && $0.chapterHref == chapterHref && $0.fragment == fragment
         }
@@ -50,11 +54,6 @@ enum WorkspaceChapterLinks {
         links.first {
             $0.noteURL.standardizedFileURL == noteURL.standardizedFileURL && $0.markerID == markerID
         }
-    }
-
-    private static func sameReadingTarget(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {
-        lhs.readingURL.standardizedFileURL == rhs.readingURL.standardizedFileURL
-            && lhs.chapterHref == rhs.chapterHref && lhs.fragment == rhs.fragment
     }
 
     private static func sameNoteMarker(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {

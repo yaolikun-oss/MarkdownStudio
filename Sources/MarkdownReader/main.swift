@@ -699,14 +699,13 @@ struct ReaderView: View {
         return workspaceTabs.allTabs.first(where: { workspaceTab($0, matches: area) })
     }
     private var activeWorkspaceEPUBContext: (url: URL, document: EPUBPackageDocument, chapter: Int)? {
-        let companionEPUB = (activeWorkspaceMarkdownURL ?? selectedFile).flatMap { note in
-            workspaceReadingNotes.first(where: {
-                $0.noteURL.standardizedFileURL == note.standardizedFileURL
-                    && ($0.readingURL.pathExtension.lowercased() == "epub" || isUnpackedEPUBDirectory($0.readingURL))
-            })?.readingURL.standardizedFileURL
-        }
-        let visibleEPUB = workspaceTab(matching: .epub)?.location?.standardizedFileURL
-        guard let url = activeWorkspaceReadingURL ?? companionEPUB ?? visibleEPUB else { return nil }
+        let visibleEPUB = workspaceTabs.groups.compactMap { group -> URL? in
+            guard let selected = group.selected,
+                  let tab = group.tabs.first(where: { $0.id == selected }),
+                  workspaceTab(tab, matches: .epub) else { return nil }
+            return tab.location?.standardizedFileURL
+        }.first
+        guard let url = activeWorkspaceReadingURL ?? visibleEPUB else { return nil }
         let key = url.path
         guard let document = workspaceEPUBDocuments[key] else { return nil }
         return (url, document, workspaceEPUBChapters[key] ?? 0)
@@ -1024,7 +1023,27 @@ struct ReaderView: View {
         )
     }
 
-    private var visibleSidebarTabs: [SidebarOutlineTab] { SidebarOutlineTab.allCases }
+    private var workspaceEntryFlow: WorkspaceEntryFlow {
+        WorkspaceEntryFlow.resolve(
+            hasProject: workspaceFileURL != nil || !workspaceFolders.isEmpty || !workspaceFiles.isEmpty,
+            hasReadingDocument: hasBookSource || workspaceTabs.allTabs.contains { $0.kind == .reading },
+            hasMarkdownDocument: selectedFile != nil || workspaceTabs.allTabs.contains {
+                $0.kind == .source || $0.kind == .visual
+            },
+            hasOpenWebPage: webSessions.tabIDs.contains { webSessions.session(for: $0)?.currentURL != nil })
+    }
+
+    private var visibleSidebarTabs: [SidebarOutlineTab] {
+        var result: [SidebarOutlineTab] = [.files]
+        if workspaceEntryFlow.showsReadingNavigation { result.append(.reading) }
+        if workspaceEntryFlow.showsMarkdownNavigation { result.append(.markdown) }
+        result.append(.webBookmarks)
+        return result
+    }
+
+    private var displayedSidebarTab: SidebarOutlineTab {
+        visibleSidebarTabs.contains(sidebarOutlineTab) ? sidebarOutlineTab : .files
+    }
 
     private var epubWidthControlIsActive: Bool {
         focusedWorkspaceArea == .epub && (epubDocument != nil || isEPUBNotebook)
@@ -1432,7 +1451,7 @@ struct ReaderView: View {
                     Image(systemName: tab.symbol)
                     .font(.system(size: 16, weight: .regular))
                     .frame(width: 38, height: 38)
-                    .background(sidebarOutlineTab == tab && showSidebar ? Color.primary.opacity(0.08) : .clear,
+                    .background(displayedSidebarTab == tab && showSidebar ? Color.primary.opacity(0.08) : .clear,
                                 in: RoundedRectangle(cornerRadius: 9))
                     .contentShape(Rectangle())
                 }
@@ -1461,39 +1480,52 @@ struct ReaderView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("工程工作区").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Button(action: createWorkspace) {
-                    Image(systemName: "plus.square.on.square").frame(width: 28, height: 26).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("新建 Workspace 工程")
-                .toolbarHint("新建 Workspace 工程（⇧⌘N）")
-                Button(action: chooseWorkspaceFile) {
-                    Image(systemName: "square.stack.3d.up").frame(width: 28, height: 26).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("打开 Workspace 工程")
-                .toolbarHint("打开 Workspace 工程（.mdworkspace）")
-                Button(action: chooseFolder) { Image(systemName: "folder.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
-                    .buttonStyle(.plain).help("打开工程文件夹").toolbarHint("打开工程文件夹")
-                Button(action: chooseFile) { Image(systemName: "doc.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
-                    .buttonStyle(.plain).help("打开文件；阅读资料会复制到当前工程").toolbarHint("打开文件；阅读资料会复制到当前工程")
-                Button(action: closeSidebarSelection) {
-                    Image(systemName: "xmark.circle").frame(width: 28, height: 26).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(!canCloseSidebarSelection)
-                .help(sidebarCloseTitle)
-                .toolbarHint("\(sidebarCloseTitle)；未保存内容会先询问")
-                .accessibilityLabel(sidebarCloseTitle)
-            }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
+            if workspaceEntryFlow.showsProjectControls {
+                HStack {
+                    Text("工程工作区").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(action: createWorkspace) {
+                        Image(systemName: "plus.square.on.square").frame(width: 28, height: 26).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("新建 Workspace 工程")
+                    .toolbarHint("新建 Workspace 工程（⇧⌘N）")
+                    Button(action: chooseWorkspaceFile) {
+                        Image(systemName: "square.stack.3d.up").frame(width: 28, height: 26).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("打开 Workspace 工程")
+                    .toolbarHint("打开 Workspace 工程（.mdworkspace）")
+                    Button(action: chooseFolder) { Image(systemName: "folder.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
+                        .buttonStyle(.plain).help("打开工程文件夹").toolbarHint("打开工程文件夹")
+                    Button(action: chooseFile) { Image(systemName: "doc.badge.plus").frame(width: 28, height: 26).contentShape(Rectangle()) }
+                        .buttonStyle(.plain).help("导入或打开文件").toolbarHint("导入文件到当前工程，或打开 Markdown")
+                    Button(action: closeSidebarSelection) {
+                        Image(systemName: "xmark.circle").frame(width: 28, height: 26).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canCloseSidebarSelection)
+                    .help(sidebarCloseTitle)
+                    .toolbarHint("\(sidebarCloseTitle)；未保存内容会先询问")
+                    .accessibilityLabel(sidebarCloseTitle)
+                }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
+            } else {
+                HStack {
+                    Text("开始").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(action: chooseFile) {
+                        Label("打开", systemImage: "folder").frame(height: 28).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("打开 EPUB、PDF、Word、Pages、Markdown 或 Workspace")
+                    .toolbarHint("打开文件；应用会根据文件类型引导下一步")
+                }.padding(.horizontal, 18).padding(.top, 22).padding(.bottom, 12)
+            }
 
             HStack(spacing: 4) {
-                Text(sidebarOutlineTab.title).font(.system(size: 12, weight: .medium))
+                Text(displayedSidebarTab.title).font(.system(size: 12, weight: .medium))
                 Spacer(minLength: 0)
-                if sidebarOutlineTab == .markdown && !headings.isEmpty {
+                if displayedSidebarTab == .markdown && !headings.isEmpty {
                     Button { expandedHeadings = Set(headings.map(\.id)) } label: {
                         Image(systemName: "arrow.down.right.and.arrow.up.left").font(.system(size: 10))
                     }.buttonStyle(.plain).help("展开全部目录").toolbarHint("展开全部目录")
@@ -1505,11 +1537,11 @@ struct ReaderView: View {
             .padding(.horizontal, 12).padding(.top, 13).padding(.bottom, 7)
 
             Group {
-                if sidebarOutlineTab == .files {
+                if displayedSidebarTab == .files {
                     fileBrowser
-                } else if sidebarOutlineTab == .webBookmarks {
+                } else if displayedSidebarTab == .webBookmarks {
                     webBookmarkOutline
-                } else if sidebarOutlineTab == .reading {
+                } else if displayedSidebarTab == .reading {
                     readingOutline
                 } else {
                     markdownOutline
@@ -1521,7 +1553,7 @@ struct ReaderView: View {
             Spacer(minLength: 0)
             HStack(spacing: 7) {
                 Image(systemName: "text.alignleft").font(.system(size: 11))
-                Text(sidebarOutlineTab == .files ? (folderURL?.lastPathComponent ?? "文件浏览") : sidebarOutlineTab == .webBookmarks ? "网页收藏" : sidebarOutlineTab == .reading
+                Text(displayedSidebarTab == .files ? (folderURL?.lastPathComponent ?? "文件浏览") : displayedSidebarTab == .webBookmarks ? "网页收藏" : displayedSidebarTab == .reading
                      ? (webBrowser.currentURL != nil ? "网页" : pdfDocument != nil ? "PDF" : epubDocument != nil ? "EPUB" : "阅读")
                      : (displayMode == .read ? "可视化编辑" : displayMode == .edit ? "Markdown 源码" : "源码 + 可视化"))
                     .font(.system(size: 11))
@@ -1536,6 +1568,30 @@ struct ReaderView: View {
 
     @ViewBuilder
     private var fileBrowser: some View {
+        if workspaceEntryFlow.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("打开一本书、一份文档或一个 Markdown 文件，应用会自动建立或进入对应的学习工程。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("打开") { chooseFile() }
+                    .buttonStyle(.borderedProminent)
+                if !recentWorkspaces.isEmpty {
+                    Divider().padding(.vertical, 4)
+                    Text("最近使用").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    ForEach(recentWorkspaces.prefix(6)) { workspace in
+                        Button { openRecentWorkspace(workspace) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(workspace.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                Text(workspace.subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Spacer()
+            }
+            .padding(16)
+        } else {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(workspaceDisplayName)
@@ -1593,6 +1649,7 @@ struct ReaderView: View {
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
                     .padding(.horizontal, 18).padding(.top, 8)
             }
+        }
         }
     }
 
@@ -1836,7 +1893,23 @@ struct ReaderView: View {
 
     private var markdownOutline: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let selectedFile {
+            if let readingURL = activeReadingURLForNoteCreation,
+               companionNoteURL(for: readingURL) == nil,
+               [.pdf, .epub, .office].contains(lastContentFocus) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("尚未创建配套笔记", systemImage: "doc.badge.plus")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("“\(readingURL.deletingPathExtension().lastPathComponent)”已经加入工程。创建后可把原文章节关联到笔记标题。")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("创建此资料的 Markdown 笔记") {
+                        createCompanionNote(for: readingURL)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(16)
+                Spacer()
+            } else if let selectedFile {
                 Text("笔记层级").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
                     .padding(.horizontal, 18).padding(.top, 8)
                 ScrollView {
@@ -1845,8 +1918,13 @@ struct ReaderView: View {
                         .id(noteTreeRevision).padding(.horizontal, 12)
                 }.frame(maxHeight: 220)
                 Divider().padding(.vertical, 6)
+                markdownHeadingOutline
+            } else {
+                Text("打开或创建 Markdown 后，文档目录会显示在这里")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    .padding(.horizontal, 18).padding(.top, 8)
+                Spacer()
             }
-            markdownHeadingOutline
         }
     }
 
@@ -2011,7 +2089,24 @@ struct ReaderView: View {
         }
     }
 
+    @ViewBuilder
     private var toolbar: some View {
+        if workspaceEntryFlow.isEmpty {
+            HStack(spacing: 10) {
+                Button("打开", action: chooseFile)
+                    .buttonStyle(.borderedProminent)
+                    .help("打开 EPUB、PDF、Word、Pages、Markdown 或 Workspace（⌘O）")
+                    .toolbarHint("打开文件 · ⌘O")
+                Text("选择资料后再显示相应的阅读、笔记和工作区工具")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 74)
+            .frame(maxWidth: .infinity)
+            .frame(height: 34)
+            .zIndex(10)
+        } else {
         HStack(spacing: 8) {
             Button {
                 showSidebar.toggle()
@@ -2271,6 +2366,7 @@ struct ReaderView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 34)
         .zIndex(10)
+        }
     }
 
     private var workspaceTitle: String {
@@ -2440,15 +2536,14 @@ struct ReaderView: View {
         return Group {
             if blocks.isEmpty && selectedFile == nil {
                 VStack(spacing: 14) {
-                    Image(systemName: "book.closed").font(.system(size: 36, weight: .ultraLight)).foregroundStyle(.tertiary)
-                    Text("让 Markdown 回到阅读的样子").font(.system(size: 17, weight: .medium)).foregroundStyle(.secondary)
-                    Text("打开一个文件，或选择文件夹浏览文档").font(.system(size: 12)).foregroundStyle(.tertiary)
-                    HStack(spacing: 10) {
-                        Button("打开文件") { chooseFile() }.buttonStyle(.bordered)
-                        Button("浏览网页") { activeSheet = .webAddress }.buttonStyle(.bordered)
-                        Button("打开文件夹") { chooseFolder() }.buttonStyle(.bordered)
-                        Button("新建 Markdown 笔记") { createMarkdownNote() }.buttonStyle(.borderedProminent)
-                    }.padding(.top, 4)
+                    Image(systemName: "doc.text.magnifyingglass").font(.system(size: 36, weight: .ultraLight)).foregroundStyle(.tertiary)
+                    Text("打开一份资料开始").font(.system(size: 17, weight: .medium)).foregroundStyle(.secondary)
+                    Text("支持 EPUB、PDF、Word、Pages、Markdown 和 Workspace；打开后再显示对应的目录与工具。")
+                        .font(.system(size: 12)).foregroundStyle(.tertiary)
+                    Button("打开") { chooseFile() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .padding(.top, 4)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 MarkdownVisualEditor(source: $source, blocks: blocks, parsedSource: parsedSource, readerWidth: appearance.readerWidth,
@@ -2462,7 +2557,10 @@ struct ReaderView: View {
                                      scrollRequest: scrollRequest,
                                      sourceLineTarget: synchronizedSourceLine, sourceLineRequest: visualSourceLineRequest,
                                      restoreRequest: visualRestoreRequest,
-                                     scrollState: visualScrollState, onSourceLineChange: synchronizeSourceLineFromVisual,
+                                     scrollState: visualScrollState,
+                                     isActive: focusedWorkspaceArea == focusArea
+                                        || (focusedWorkspaceArea == .outline && lastContentFocus == focusArea),
+                                     onSourceLineChange: synchronizeSourceLineFromVisual,
                                      onActivate: { activateWorkspaceArea(focusArea) },
                                      onImagePaste: importVisualClipboardImage, onMarkdownLink: { open($0) },
                                      onSlashCommand: applySlashCommand, onDeleteManagedNote: deleteManagedChild)
@@ -2681,7 +2779,10 @@ struct ReaderView: View {
                 pendingEPUBURL = url; pendingConvertedEPUBURL = nil; openEPUBOriginal(editable: false)
             } else if OfficeReadingFormat.supports(url) { openOfficeDocument(url) }
             else if let tab = restored.allTabs.first(where: { $0.kind == .reading }) { restored.remove(tab.id) }
-            if pdfSourceURL == nil && epubDocument == nil && officeDocumentURL == nil && !isConvertingKindle && pendingPDFURL == nil {
+            if WorkspaceReadingRestoration.shouldDiscardReadingTabs(
+                hasLoadedDocument: pdfSourceURL != nil || epubDocument != nil || officeDocumentURL != nil,
+                isConvertingKindle: isConvertingKindle, isOpeningEPUB: isOpeningEPUB,
+                hasPendingPDF: pendingPDFURL != nil) {
                 for tab in restored.allTabs where tab.kind == .reading { restored.remove(tab.id) }
             }
         }
@@ -3019,10 +3120,15 @@ struct ReaderView: View {
     }
 
     private func selectWorkspaceTab(_ tab: WorkspaceTab) {
+        let wasVisibleBeforeSelection = workspaceTabs.groups.contains { $0.selected == tab.id }
+        let previousAreaBeforeSelection = focusedWorkspaceArea
+        // Start a reading pane's lazy load on the first click. Markdown still
+        // flushes before keyboard focus is transferred to the reader.
+        if tab.kind == .reading { workspaceTabs.select(tab.id) }
         MarkdownVisualCommandHub.commitActiveEdits {
             MarkdownSourcePositionHub.capture()
-            let wasVisible = workspaceTabs.groups.contains { $0.selected == tab.id }
-            let previousArea = focusedWorkspaceArea
+            let wasVisible = wasVisibleBeforeSelection
+            let previousArea = previousAreaBeforeSelection
             workspaceTabs.select(tab.id)
             switch tab.kind {
             case .web: webSessions.activate(tab.id); activateWorkspaceArea(.web)
@@ -3093,6 +3199,7 @@ struct ReaderView: View {
     private func closeWorkspaceTab(_ tab: WorkspaceTab) {
         MarkdownVisualCommandHub.commitActiveEdits {
             MarkdownSourcePositionHub.capture()
+            let wasActive = activeWorkspaceTab?.id == tab.id
             switch tab.kind {
             case .web:
                 webSessions.close(tab.id)
@@ -3102,6 +3209,7 @@ struct ReaderView: View {
                 if tab.location?.standardizedFileURL == (officeDocumentURL ?? pdfSourceURL ?? epubDocument?.sourceURL)?.standardizedFileURL {
                     clearReadingSource()
                 }
+                activateReplacementTabAfterClose(ifNeeded: wasActive)
             case .source, .visual:
                 guard let url = tab.location else { workspaceTabs.remove(tab.id); return }
                 let siblingViews = workspaceTabs.allTabs.filter {
@@ -3117,6 +3225,19 @@ struct ReaderView: View {
                 } else {
                     finishClosingWorkspaceTab(tab.id, discard: false)
                 }
+            }
+        }
+    }
+
+    private func activateReplacementTabAfterClose(ifNeeded: Bool) {
+        guard ifNeeded else { return }
+        DispatchQueue.main.async {
+            if let replacement = activeWorkspaceTab {
+                selectWorkspaceTab(replacement)
+            } else {
+                sidebarOutlineTab = folderURL != nil || !workspaceFiles.isEmpty ? .files
+                    : selectedFile != nil ? .markdown : .files
+                activateWorkspaceArea(selectedFile == nil ? .markdownReader : .markdownPreview)
             }
         }
     }
@@ -5126,6 +5247,27 @@ struct ReaderView: View {
         })?.noteURL.standardizedFileURL
     }
 
+    private var activeReadingURLForNoteCreation: URL? {
+        activeWorkspaceReadingURL ?? activeReadingURL
+    }
+
+    private func createCompanionNote(for readingURL: URL) {
+        do {
+            guard let noteURL = try ensureCompanionNote(for: readingURL) else {
+                saveError = "请先把阅读资料加入一个 Workspace 工程。"
+                return
+            }
+            persistWorkspaceGrid()
+            activateCompanionNote(for: readingURL, selectNote: true)
+            if activeWorkspaceMarkdownURL?.standardizedFileURL != noteURL.standardizedFileURL,
+               let session = documentSessions.session(for: noteURL) {
+                activateWorkspaceMarkdownSession(session, mode: .visual)
+            }
+        } catch {
+            saveError = "无法创建配套 Markdown 笔记：\(error.localizedDescription)"
+        }
+    }
+
     private func activateCompanionNote(for readingURL: URL, selectNote: Bool) {
         guard let noteURL = companionNoteURL(for: readingURL),
               FileManager.default.fileExists(atPath: noteURL.path) else { return }
@@ -5209,13 +5351,6 @@ struct ReaderView: View {
         if importIntoWorkspace {
             ensureAutomaticProject(for: openingURL, isFolder: false)
             registerWorkspaceResource(openingURL)
-            if isReadingResource(openingURL) {
-                do { _ = try ensureCompanionNote(for: openingURL) }
-                catch {
-                    saveError = "无法建立配套 Markdown 笔记：\(error.localizedDescription)"
-                    return
-                }
-            }
         }
         if (openingURL.pathExtension.lowercased() == "epub" || openingURL.pathExtension.lowercased() == "pdf"
             || KindleBookConverter.isSupported(openingURL) || isUnpackedEPUBDirectory(openingURL)),

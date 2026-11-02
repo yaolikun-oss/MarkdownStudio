@@ -127,6 +127,7 @@ struct WorkspaceMarkdownPane: View {
             baseURL: session.url.deletingLastPathComponent(), scrollTarget: nil, scrollRequest: 0,
             sourceLineTarget: sourceLine, sourceLineRequest: visualLineRequest,
             restoreRequest: visualRestoreRequest, scrollState: session.position,
+            isActive: isActive,
             onSourceLineChange: { line in
                 sourceLine = line
                 onSourceLineChange(session, line)

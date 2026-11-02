@@ -9,6 +9,13 @@ struct WorkspaceEPUBNavigationTarget: Equatable {
     let revision: Int
 }
 
+enum WorkspaceReadingRestoration {
+    static func shouldDiscardReadingTabs(hasLoadedDocument: Bool, isConvertingKindle: Bool,
+                                         isOpeningEPUB: Bool, hasPendingPDF: Bool) -> Bool {
+        !hasLoadedDocument && !isConvertingKindle && !isOpeningEPUB && !hasPendingPDF
+    }
+}
+
 /// A reading tab loads and owns its own document state. Changing the active
 /// reading tab therefore cannot replace the content or position of another tab.
 struct WorkspaceReadingPane: View {
