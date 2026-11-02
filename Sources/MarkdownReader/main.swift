@@ -600,6 +600,9 @@ struct ReaderView: View {
     @State private var isConvertingKindle = false
     @State private var kindleConversionRevision = 0
     @State private var kindleConversionTask: Task<URL, Error>?
+    @State private var isOpeningEPUB = false
+    @State private var epubOpeningRevision = 0
+    @State private var epubOpeningTask: Task<EPUBPackageDocument, Error>?
     @State private var isImportingReadingResource = false
     @State private var readingImportTask: Task<Void, Never>?
     @State private var isEPUBNotebook = false
@@ -901,8 +904,10 @@ struct ReaderView: View {
             activateWorkspaceArea(mode == .edit ? .markdownEditor : .markdownReader)
         }
         .overlay {
-            if isConvertingKindle || isImportingReadingResource {
-                ProgressView(isConvertingKindle ? "正在转换电子书为 EPUB…" : "正在复制并校验阅读资料…")
+            if isConvertingKindle || isImportingReadingResource || isOpeningEPUB {
+                ProgressView(isConvertingKindle ? "正在转换电子书为 EPUB…"
+                             : isImportingReadingResource ? "正在复制并校验阅读资料…"
+                             : "正在解析 EPUB 目录与章节…")
                     .padding(20)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             }
@@ -2525,6 +2530,8 @@ struct ReaderView: View {
                         activateWorkspaceArea(readingArea(for: url))
                     },
                     onError: { saveError = $0 },
+                    initialEPUBDocument: workspaceEPUBDocuments[epubKey]
+                        ?? (epubDocument?.sourceURL.standardizedFileURL == url.standardizedFileURL ? epubDocument : nil),
                     epubNavigationTarget: workspaceEPUBNavigationTargets[epubKey],
                     onEPUBLoaded: { document in
                         workspaceEPUBDocuments[epubKey] = document
@@ -3598,6 +3605,10 @@ struct ReaderView: View {
     }
 
     private func performOpenRecentWorkspace(_ workspace: RecentWorkspace) {
+        epubOpeningTask?.cancel()
+        epubOpeningTask = nil
+        epubOpeningRevision += 1
+        isOpeningEPUB = false
         kindleConversionTask?.cancel()
         kindleConversionTask = nil
         kindleConversionRevision += 1
@@ -3639,17 +3650,10 @@ struct ReaderView: View {
             return
         }
         if readingURL.pathExtension.lowercased() == "epub" || isUnpackedEPUBDirectory(readingURL) {
-            suppressRecentRecording = true
+            pendingRecentWorkspace = workspace
             pendingEPUBURL = readingURL
             pendingConvertedEPUBURL = nil
             openEPUBOriginal(editable: false)
-            if epubDocument?.sourceURL.standardizedFileURL == readingURL.standardizedFileURL {
-                restoreRecentNote(workspace.noteURL)
-                suppressRecentRecording = false
-                recordRecentWorkspace()
-            } else {
-                suppressRecentRecording = false
-            }
             return
         }
         saveError = "最近使用记录中的阅读文件格式不受支持：\(readingURL.lastPathComponent)"
@@ -4752,6 +4756,10 @@ struct ReaderView: View {
     }
 
     private func performOpen(_ url: URL, importIntoWorkspace: Bool = true) {
+        epubOpeningTask?.cancel()
+        epubOpeningTask = nil
+        epubOpeningRevision += 1
+        isOpeningEPUB = false
         kindleConversionTask?.cancel()
         kindleConversionTask = nil
         kindleConversionRevision += 1
@@ -4891,10 +4899,7 @@ struct ReaderView: View {
                 pendingEPUBURL = url
                 pendingConvertedEPUBURL = converted
                 if pendingRecentWorkspace?.readingURL?.standardizedFileURL == url.standardizedFileURL {
-                    suppressRecentRecording = true
                     openEPUBOriginal(editable: false)
-                    suppressRecentRecording = false
-                    finishPendingRecentWorkspace()
                 } else {
                     showEPUBModeChoice = true
                 }
@@ -4931,32 +4936,75 @@ struct ReaderView: View {
         return FileManager.default.fileExists(atPath: url.appendingPathComponent("META-INF/container.xml").path)
     }
 
-    private func openEPUBOriginal(editable: Bool) {
+    private func openEPUBOriginal(editable: Bool, selectCompanionNote: Bool = false) {
         guard let url = pendingEPUBURL else { return }
         let convertedURL = pendingConvertedEPUBURL
         pendingEPUBURL = nil
         pendingConvertedEPUBURL = nil
         if activeBookURL?.standardizedFileURL != url.standardizedFileURL { flushCurrentReadingProfile() }
-        do {
-            let document = try EPUBPackageDocument.open(url, bookURL: convertedURL)
-            officeDocumentURL = nil
-            pdfDocument = nil
-            pdfSourceURL = nil
-            epubDocument = document
-            isEPUBNotebook = selectedFile != nil && !editable
-            if isEPUBNotebook || usesSwitchDisplay { epubNotebookLayout = usesSwitchDisplay ? .epub : .stacked; showsNotesTab = false }
-            activateWorkspaceArea(.epub)
-            maximizedNotebookPane = nil
-            epubCurrentChapter = 0
-            beginLoadingReadingProfile(for: url, sourceKind: .epub, title: document.title)
-            epubHasChanges = false
-            documentTitle = epubDocument?.title ?? url.deletingPathExtension().lastPathComponent
-            displayMode = editable ? .edit : .read
-            activateCompanionNote(for: url, selectNote: false)
-            recordRecentWorkspace()
-        } catch {
-            saveError = error.localizedDescription
+        let cacheKey = url.standardizedFileURL.path
+        if !editable, convertedURL == nil,
+           let cached = workspaceEPUBDocuments[cacheKey]
+                ?? (epubDocument?.sourceURL.standardizedFileURL == url.standardizedFileURL ? epubDocument : nil) {
+            installOpenedEPUB(cached, from: url, editable: false, cacheKey: cacheKey,
+                              selectCompanionNote: selectCompanionNote)
+            return
         }
+
+        epubOpeningTask?.cancel()
+        epubOpeningRevision += 1
+        let revision = epubOpeningRevision
+        isOpeningEPUB = true
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try EPUBPackageDocument.open(url, bookURL: convertedURL)
+        }
+        epubOpeningTask = task
+        Task { @MainActor in
+            do {
+                let document = try await task.value
+                guard revision == epubOpeningRevision else { return }
+                epubOpeningTask = nil
+                isOpeningEPUB = false
+                installOpenedEPUB(document, from: url, editable: editable,
+                                  cacheKey: !editable && convertedURL == nil ? cacheKey : nil,
+                                  selectCompanionNote: selectCompanionNote)
+            } catch is CancellationError {
+                guard revision == epubOpeningRevision else { return }
+                epubOpeningTask = nil
+                isOpeningEPUB = false
+            } catch {
+                guard revision == epubOpeningRevision else { return }
+                epubOpeningTask = nil
+                isOpeningEPUB = false
+                pendingRecentWorkspace = nil
+                saveError = error.localizedDescription
+            }
+        }
+    }
+
+    private func installOpenedEPUB(_ document: EPUBPackageDocument, from url: URL,
+                                   editable: Bool, cacheKey: String?, selectCompanionNote: Bool) {
+        if let cacheKey { workspaceEPUBDocuments[cacheKey] = document }
+        officeDocumentURL = nil
+        pdfDocument = nil
+        pdfSourceURL = nil
+        epubDocument = document
+        isEPUBNotebook = selectedFile != nil && !editable
+        if isEPUBNotebook || usesSwitchDisplay {
+            epubNotebookLayout = usesSwitchDisplay ? .epub : .stacked
+            showsNotesTab = false
+        }
+        activateWorkspaceArea(.epub)
+        maximizedNotebookPane = nil
+        epubCurrentChapter = 0
+        beginLoadingReadingProfile(for: url, sourceKind: .epub, title: document.title)
+        epubHasChanges = false
+        documentTitle = document.title
+        displayMode = editable ? .edit : .read
+        activateCompanionNote(for: url, selectNote: selectCompanionNote)
+        if pendingRecentWorkspace != nil { finishPendingRecentWorkspace() }
+        else { recordRecentWorkspace() }
     }
 
     private func openEPUBNote() {
@@ -4981,8 +5029,7 @@ struct ReaderView: View {
             openEPUBNote()
             return
         }
-        openEPUBOriginal(editable: false)
-        activateCompanionNote(for: url, selectNote: true)
+        openEPUBOriginal(editable: false, selectCompanionNote: true)
     }
 
     private func performOpenEPUBNote(_ url: URL, convertedURL: URL?) {
@@ -5653,6 +5700,10 @@ struct ReaderView: View {
     }
 
     private func clearReadingSource() {
+        epubOpeningTask?.cancel()
+        epubOpeningTask = nil
+        epubOpeningRevision += 1
+        isOpeningEPUB = false
         officeDocumentURL = nil
         officePreviewState.clear()
         clearReadingProfileSelection()

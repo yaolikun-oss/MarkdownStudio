@@ -25,6 +25,10 @@ struct WorkspaceReadingPane: View {
     let lineHeight: Double
     let onActivate: () -> Void
     let onError: (String) -> Void
+    /// The main workspace may already have parsed this EPUB while preparing
+    /// its outline. Reuse that immutable document instead of unzipping and
+    /// parsing the same book a second time for the reading pane.
+    let initialEPUBDocument: EPUBPackageDocument?
     let epubNavigationTarget: WorkspaceEPUBNavigationTarget?
     let onEPUBLoaded: (EPUBPackageDocument) -> Void
     let onEPUBChapterChanged: (Int) -> Void
@@ -97,6 +101,15 @@ struct WorkspaceReadingPane: View {
         loading = true
         defer { loading = false }
         let ext = url.pathExtension.lowercased()
+        if (ext == "epub" || FileManager.default.fileExists(atPath: url.appendingPathComponent("META-INF/container.xml").path)),
+           let initialEPUBDocument {
+            epubDocument = initialEPUBDocument
+            onEPUBLoaded(initialEPUBDocument)
+            onEPUBChapterChanged(chapter)
+            applyEPUBNavigationTarget()
+            requestEPUBFocus()
+            return
+        }
         if ext == "pdf" {
             pdfDocument = PDFDocument(url: url)
             if pdfDocument == nil { onError("无法读取 PDF 文件：\(url.lastPathComponent)") }
