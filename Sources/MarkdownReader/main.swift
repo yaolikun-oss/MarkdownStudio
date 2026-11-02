@@ -508,6 +508,7 @@ struct ReaderView: View {
     @State private var workspaceNoteIdentity: URL?
     @State private var activeWorkspaceMarkdownURL: URL?
     @State private var workspaceReadingIdentity: URL?
+    @State private var lastFocusedWorkspaceReadingURL: URL?
     @State private var workspaceEPUBDocuments: [String: EPUBPackageDocument] = [:]
     @State private var workspaceEPUBChapters: [String: Int] = [:]
     @State private var workspaceEPUBNavigationTargets: [String: WorkspaceEPUBNavigationTarget] = [:]
@@ -650,11 +651,8 @@ struct ReaderView: View {
     }
     private var activeReadingURL: URL? { officeDocumentURL ?? activeBookURL }
     private var activeWorkspaceReadingURL: URL? {
-        guard let groupID = workspaceTabs.activeGroup,
-              let group = workspaceTabs.groups.first(where: { $0.id == groupID }),
-              let selected = group.selected,
-              let tab = group.tabs.first(where: { $0.id == selected && $0.kind == .reading }) else { return nil }
-        return tab.location?.standardizedFileURL
+        WorkspaceReadingContextResolver.resolve(
+            in: workspaceTabs, lastFocused: lastFocusedWorkspaceReadingURL, fallback: nil)
     }
 
     private var activeWorkspaceTab: WorkspaceTab? {
@@ -700,13 +698,7 @@ struct ReaderView: View {
         return workspaceTabs.allTabs.first(where: { workspaceTab($0, matches: area) })
     }
     private var activeWorkspaceEPUBContext: (url: URL, document: EPUBPackageDocument, chapter: Int)? {
-        let visibleEPUB = workspaceTabs.groups.compactMap { group -> URL? in
-            guard let selected = group.selected,
-                  let tab = group.tabs.first(where: { $0.id == selected }),
-                  workspaceTab(tab, matches: .epub) else { return nil }
-            return tab.location?.standardizedFileURL
-        }.first
-        guard let url = activeWorkspaceReadingURL ?? visibleEPUB else { return nil }
+        guard let url = activeWorkspaceReadingURL else { return nil }
         let key = url.path
         guard let document = workspaceEPUBDocuments[key] else { return nil }
         return (url, document, workspaceEPUBChapters[key] ?? 0)
@@ -740,7 +732,8 @@ struct ReaderView: View {
         let target = workspaceEPUBNavigationTargets[context.url.path]
         let fragment = target?.chapterIndex == context.chapter ? target?.fragment : nil
         return chapterLink(for: context.url, document: context.document,
-                           target: (context.chapter, fragment))
+                           target: (context.chapter, fragment),
+                           readingAnchorID: target?.chapterIndex == context.chapter ? target?.readingAnchorID : nil)
     }
 
     private func chapterLink(for heading: MarkdownBlock) -> WorkspaceChapterLink? {
@@ -794,12 +787,20 @@ struct ReaderView: View {
         }
         let target = workspaceEPUBNavigationTargets[context.url.path]
         let fragment = target?.chapterIndex == context.chapter ? target?.fragment : nil
-        let chapterTitle = context.document.tableOfContents.first(where: {
+        let anchorID = target?.chapterIndex == context.chapter ? target?.readingAnchorID : nil
+        let exactTOCItem = anchorID.flatMap { expected in
+            context.document.tableOfContents.enumerated().first { index, item in
+                WorkspaceEPUBTOCIdentity.make(index: index, level: item.level,
+                    href: item.href, title: item.title) == expected
+            }?.element
+        }
+        let chapterTitle = exactTOCItem?.title ?? context.document.tableOfContents.first(where: {
             guard let itemTarget = context.document.navigationTarget(for: $0) else { return false }
             return itemTarget.chapterIndex == context.chapter && itemTarget.fragment == fragment
         })?.title ?? context.document.chapters[context.chapter].title
         bindChapter(readingURL: context.url, document: context.document,
-                    target: (context.chapter, fragment), title: chapterTitle, heading: heading)
+                    target: (context.chapter, fragment), title: chapterTitle, heading: heading,
+                    readingAnchorID: anchorID)
     }
 
     private func bindCurrentChapter(anchorToken: String?) {
@@ -915,11 +916,12 @@ struct ReaderView: View {
     }
 
     private func followLinkedNote(for readingURL: URL, document: EPUBPackageDocument?, chapter: Int,
-                                  fragment: String?) {
+                                  fragment: String?, readingAnchorID: String?) {
         guard chapterFollowingEnabled, let document, document.chapters.indices.contains(chapter) else { return }
         let href = document.chapters[chapter].href
         guard let link = WorkspaceChapterLinks.link(for: readingURL, chapterHref: href,
-                                                    fragment: fragment, in: workspaceChapterLinks) else { return }
+                                                    fragment: fragment, readingAnchorID: readingAnchorID,
+                                                    in: workspaceChapterLinks) else { return }
         navigateToLinkedNote(link, activate: false)
     }
 
@@ -1020,7 +1022,8 @@ struct ReaderView: View {
                 workspaceEPUBChapters[key] = chapter
                 let revision = (workspaceEPUBNavigationTargets[key]?.revision ?? 0) + 1
                 workspaceEPUBNavigationTargets[key] = WorkspaceEPUBNavigationTarget(
-                    chapterIndex: chapter, fragment: link.fragment, revision: revision)
+                    chapterIndex: chapter, fragment: link.fragment,
+                    readingAnchorID: link.readingAnchorID, revision: revision)
             } catch {
                 saveError = "无法打开关联原文：\(error.localizedDescription)"
             }
@@ -1884,7 +1887,8 @@ struct ReaderView: View {
                 workspaceEPUBChapters[key] = target.chapterIndex
                 let revision = (workspaceEPUBNavigationTargets[key]?.revision ?? 0) + 1
                 workspaceEPUBNavigationTargets[key] = WorkspaceEPUBNavigationTarget(
-                    chapterIndex: target.chapterIndex, fragment: target.fragment, revision: revision)
+                    chapterIndex: target.chapterIndex, fragment: target.fragment,
+                    readingAnchorID: target.readingAnchorID, revision: revision)
             }
         } else if let epubDocument {
             epubTableOfContents(epubDocument, readingURL: epubDocument.sourceURL, currentChapter: epubCurrentChapter) { target in
@@ -1903,7 +1907,7 @@ struct ReaderView: View {
         _ document: EPUBPackageDocument,
         readingURL: URL,
         currentChapter: Int,
-        onSelect: @escaping ((chapterIndex: Int, fragment: String?)) -> Void
+        onSelect: @escaping ((chapterIndex: Int, fragment: String?, readingAnchorID: String?)) -> Void
     ) -> some View {
         if document.tableOfContents.isEmpty {
             Text("此 EPUB 没有可识别的目录")
@@ -1923,7 +1927,9 @@ struct ReaderView: View {
                     HStack(spacing: 3) {
                     Button {
                         activateWorkspaceArea(.outline)
-                        if let target { onSelect(target) }
+                        if let target {
+                            onSelect((target.chapterIndex, target.fragment, readingAnchorID))
+                        }
                     } label: {
                         Text(item.title).lineLimit(2)
                             .font(.system(size: max(11, 12 * outlineFontScale), weight: item.level == 0 ? .medium : .regular))
@@ -2941,6 +2947,7 @@ struct ReaderView: View {
             for id in webSessions.tabIDs { webSessions.close(id) }
             workspaceTabs = WorkspaceGridLayout()
             workspaceNoteIdentity = nil; workspaceReadingIdentity = nil
+            lastFocusedWorkspaceReadingURL = nil
             workspaceMarkdownNavigationTargets = [:]
             workspaceMarkdownSourceLines = [:]
             workspaceExplicitHeadings = [:]
@@ -3098,8 +3105,11 @@ struct ReaderView: View {
                     },
                     onEPUBChapterChanged: { chapter, fragment in
                         workspaceEPUBChapters[epubKey] = chapter
+                        let navigation = workspaceEPUBNavigationTargets[epubKey]
+                        let anchorID = navigation?.chapterIndex == chapter && navigation?.fragment == fragment
+                            ? navigation?.readingAnchorID : nil
                         followLinkedNote(for: url, document: workspaceEPUBDocuments[epubKey],
-                                         chapter: chapter, fragment: fragment)
+                                         chapter: chapter, fragment: fragment, readingAnchorID: anchorID)
                     },
                     chapter: workspaceEPUBChapterBinding(for: url),
                     pdfZoomPercent: $pdfZoomPercent,
@@ -3185,6 +3195,7 @@ struct ReaderView: View {
     }
 
     private func activateWorkspaceReading(_ url: URL) {
+        lastFocusedWorkspaceReadingURL = url.workspaceIdentityURL
         let ext = url.pathExtension.lowercased()
         if ext == "pdf" {
             if pdfSourceURL?.standardizedFileURL != url.standardizedFileURL {
@@ -3319,6 +3330,9 @@ struct ReaderView: View {
                 workspaceTabs.remove(tab.id)
             case .reading:
                 workspaceTabs.remove(tab.id)
+                if tab.location?.workspaceIdentityPath == lastFocusedWorkspaceReadingURL?.workspaceIdentityPath {
+                    lastFocusedWorkspaceReadingURL = nil
+                }
                 if tab.location?.standardizedFileURL == (officeDocumentURL ?? pdfSourceURL ?? epubDocument?.sourceURL)?.standardizedFileURL {
                     clearReadingSource()
                 }
@@ -4325,6 +4339,7 @@ struct ReaderView: View {
         workspaceTabs = WorkspaceGridLayout()
         workspaceNoteIdentity = nil
         workspaceReadingIdentity = nil
+        lastFocusedWorkspaceReadingURL = nil
         activeWorkspaceMarkdownURL = nil
         clearNoteDocument()
         clearReadingSource()
@@ -4485,6 +4500,9 @@ struct ReaderView: View {
         }
         let activeReading = (officeDocumentURL ?? pdfSourceURL ?? epubDocument?.sourceURL)?.standardizedFileURL
         if activeReading == canonical { clearReadingSource() }
+        if lastFocusedWorkspaceReadingURL?.workspaceIdentityPath == canonical.workspaceIdentityPath {
+            lastFocusedWorkspaceReadingURL = nil
+        }
         workspaceEPUBDocuments.removeValue(forKey: canonical.path)
         workspaceEPUBChapters.removeValue(forKey: canonical.path)
         workspaceEPUBNavigationTargets.removeValue(forKey: canonical.path)
@@ -5313,15 +5331,19 @@ struct ReaderView: View {
     }
 
     private func ensureCompanionNote(for readingURL: URL) throws -> URL? {
-        guard isReadingResource(readingURL), let root = workspaceFolders.first?.standardizedFileURL else { return nil }
+        guard isReadingResource(readingURL),
+              let root = WorkspaceReadingNoteLinks.destinationRoot(
+                for: readingURL, workspaceRoots: workspaceFolders) else { return nil }
         let canonicalReading = readingURL.workspaceIdentityURL
         let manager = FileManager.default
 
         let noteURL: URL
+        let createsRelationship: Bool
         if let existing = workspaceReadingNotes.first(where: {
             $0.readingURL.workspaceIdentityPath == canonicalReading.workspaceIdentityPath
         }) {
             noteURL = existing.noteURL.workspaceIdentityURL
+            createsRelationship = false
         } else {
             let directory = root.appendingPathComponent("笔记/书籍笔记", isDirectory: true)
             try manager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -5330,21 +5352,33 @@ struct ReaderView: View {
             var candidate = directory.appendingPathComponent("\(base).md")
             var suffix = 2
             let used = Set(workspaceReadingNotes.map { $0.noteURL.standardizedFileURL.path })
-            while used.contains(candidate.standardizedFileURL.path) {
+            while used.contains(candidate.standardizedFileURL.path) || manager.fileExists(atPath: candidate.path) {
                 candidate = directory.appendingPathComponent("\(base)-\(suffix).md")
                 suffix += 1
             }
             noteURL = candidate
-            workspaceReadingNotes.append(WorkspaceReadingNoteLink(readingURL: canonicalReading, noteURL: noteURL))
+            createsRelationship = true
         }
 
         try manager.createDirectory(at: noteURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var createdFile = false
         if !manager.fileExists(atPath: noteURL.path) {
             let title = canonicalReading.deletingPathExtension().lastPathComponent
             try "# \(title)\n\n".write(to: noteURL, atomically: true, encoding: .utf8)
+            createdFile = true
         }
-        let document = try documentStore.openDocument(at: noteURL)
+        let document: MarkdownDocument
+        do {
+            document = try documentStore.openDocument(at: noteURL)
+        } catch {
+            if createdFile { try? manager.removeItem(at: noteURL) }
+            throw error
+        }
         _ = documentSessions.adoptMarkdown(noteURL, text: document.source)
+        if createsRelationship {
+            workspaceReadingNotes.append(WorkspaceReadingNoteLink(
+                readingURL: canonicalReading, noteURL: noteURL))
+        }
         if !workspaceTabs.allTabs.contains(where: {
             $0.kind == .visual && $0.location?.standardizedFileURL == noteURL.standardizedFileURL
         }) {
@@ -5361,7 +5395,10 @@ struct ReaderView: View {
     }
 
     private var activeReadingURLForNoteCreation: URL? {
-        activeWorkspaceReadingURL ?? activeReadingURL
+        if workspaceTabs.allTabs.contains(where: { $0.kind == .reading }) {
+            return activeWorkspaceReadingURL
+        }
+        return activeReadingURL
     }
 
     private func createCompanionNote(for readingURL: URL) {
@@ -6437,6 +6474,7 @@ struct ReaderView: View {
         workspaceTabs = WorkspaceGridLayout()
         workspaceNoteIdentity = nil
         workspaceReadingIdentity = nil
+        lastFocusedWorkspaceReadingURL = nil
         workspaceEPUBDocuments = [:]
         workspaceEPUBChapters = [:]
         workspaceEPUBNavigationTargets = [:]

@@ -12,6 +12,14 @@ struct WorkspaceReadingNoteLink: Codable, Equatable, Identifiable {
 }
 
 enum WorkspaceReadingNoteLinks {
+    static func destinationRoot(for readingURL: URL, workspaceRoots: [URL]) -> URL? {
+        let readingPath = readingURL.workspaceIdentityPath
+        return workspaceRoots.map(\.workspaceIdentityURL)
+            .filter { readingPath == $0.path || readingPath.hasPrefix($0.path + "/") }
+            .max(by: { $0.path.count < $1.path.count })
+            ?? workspaceRoots.first?.workspaceIdentityURL
+    }
+
     /// A reading source owns one companion note. Older builds could encode the
     /// same unpacked EPUB twice because Foundation distinguished directory and
     /// file-style URLs with the same path. Prefer an existing note and remove

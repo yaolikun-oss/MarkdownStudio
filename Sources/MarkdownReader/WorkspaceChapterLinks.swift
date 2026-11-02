@@ -49,12 +49,14 @@ enum WorkspaceChapterLinks {
     static func link(for readingURL: URL, chapterHref: String, fragment: String?,
                      readingAnchorID: String? = nil,
                      in links: [WorkspaceChapterLink]) -> WorkspaceChapterLink? {
-        if let readingAnchorID,
-           let anchored = links.last(where: {
-               $0.readingURL.workspaceIdentityPath == readingURL.workspaceIdentityPath
-                   && $0.readingAnchorID == readingAnchorID
-           }) {
-            return anchored
+        if let readingAnchorID {
+            // A TOC row is an exact identity. Falling back to href/fragment
+            // here can make a neighbouring row that points at the same XHTML
+            // page borrow another row's association.
+            return links.last {
+                $0.readingURL.workspaceIdentityPath == readingURL.workspaceIdentityPath
+                    && $0.readingAnchorID == readingAnchorID
+            }
         }
         return links.last {
             $0.readingURL.workspaceIdentityPath == readingURL.workspaceIdentityPath

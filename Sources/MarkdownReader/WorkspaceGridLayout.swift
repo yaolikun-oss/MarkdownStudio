@@ -147,3 +147,27 @@ struct WorkspaceGridLayout: Codable, Equatable {
         activeGroup = group.id
     }
 }
+
+enum WorkspaceReadingContextResolver {
+    /// Reading actions must follow the selected reading tab, then the last
+    /// reader that actually received focus. Choosing an arbitrary visible
+    /// book is unsafe when several EPUBs are split across the workspace.
+    static func resolve(in layout: WorkspaceGridLayout, lastFocused: URL?, fallback: URL?) -> URL? {
+        if let active = layout.activeGroup,
+           let group = layout.groups.first(where: { $0.id == active }),
+           let selected = group.selected,
+           let tab = group.tabs.first(where: { $0.id == selected && $0.kind == .reading }),
+           let location = tab.location {
+            return location.workspaceIdentityURL
+        }
+        if let lastFocused {
+            let canonical = lastFocused.workspaceIdentityURL
+            if layout.allTabs.contains(where: {
+                $0.kind == .reading && $0.location?.workspaceIdentityPath == canonical.workspaceIdentityPath
+            }) {
+                return canonical
+            }
+        }
+        return fallback?.workspaceIdentityURL
+    }
+}

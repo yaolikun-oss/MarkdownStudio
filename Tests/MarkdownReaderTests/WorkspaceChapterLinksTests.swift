@@ -153,6 +153,40 @@ import Testing
                                                           in: links))
     }
 
+    @Test func anUnlinkedTOCRowNeverBorrowsAnotherRowsAssociation() {
+        let linkedRow = WorkspaceEPUBTOCIdentity.make(index: 8, level: 0,
+            href: "Text/shared.xhtml", title: "八 守法公民的责任")
+        let unlinkedRow = WorkspaceEPUBTOCIdentity.make(index: 7, level: 0,
+            href: "Text/shared.xhtml", title: "七 万湖会议")
+        let link = makeLink(section: 8, href: "Text/shared.xhtml", fragment: nil,
+                            marker: UUID(), readingAnchorID: linkedRow)
+
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/shared.xhtml", fragment: nil,
+                                          readingAnchorID: linkedRow, in: [link])?.id == link.id)
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/shared.xhtml", fragment: nil,
+                                          readingAnchorID: unlinkedRow, in: [link]) == nil)
+    }
+
+    @Test func identicalTOCRowsInDifferentBooksRemainIndependent() {
+        let otherBook = URL(fileURLWithPath: "/tmp/关联测试/另一部长书.epub")
+        let anchor = WorkspaceEPUBTOCIdentity.make(index: 4, level: 1,
+            href: "Text/shared.xhtml", title: "共同标题")
+        let first = makeLink(section: 4, href: "Text/shared.xhtml", fragment: nil,
+                             marker: UUID(), readingAnchorID: anchor)
+        let second = WorkspaceChapterLink(readingURL: otherBook, readingFingerprint: "other",
+            chapterHref: "Text/shared.xhtml", fragment: nil, readingAnchorID: anchor,
+            chapterTitle: "另一部书的共同标题", noteURL: URL(fileURLWithPath: "/tmp/关联测试/另一笔记.md"),
+            markerID: UUID(), headingTitle: "另一笔记标题", headingLevel: 2)
+        var links = WorkspaceChapterLinks.upserting(first, into: [])
+        links = WorkspaceChapterLinks.upserting(second, into: links)
+
+        #expect(links.count == 2)
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: first.chapterHref, fragment: nil,
+                                          readingAnchorID: anchor, in: links)?.id == first.id)
+        #expect(WorkspaceChapterLinks.link(for: otherBook, chapterHref: second.chapterHref, fragment: nil,
+                                          readingAnchorID: anchor, in: links)?.id == second.id)
+    }
+
     @Test func olderSavedLinkWithoutTOCIdentityStillDecodes() throws {
         let link = makeLink(section: 8, href: "Text/eight.xhtml", fragment: nil, marker: UUID())
         var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(link)) as? [String: Any])

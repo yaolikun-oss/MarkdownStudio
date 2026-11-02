@@ -3,6 +3,56 @@ import Testing
 @testable import MarkdownReader
 
 struct WorkspaceTabLayoutTests {
+    @Test func focusedReadingContextFollowsTheSelectedBookAcrossSeveralEPUBs() throws {
+        let firstBook = URL(fileURLWithPath: "/tmp/阅读上下文/第一本.epub")
+        let secondBook = URL(fileURLWithPath: "/tmp/阅读上下文/第二本.epub")
+        let note = URL(fileURLWithPath: "/tmp/阅读上下文/笔记.md")
+        var layout = WorkspaceGridLayout()
+        let first = WorkspaceTab(.reading, location: firstBook)
+        let second = WorkspaceTab(.reading, location: secondBook)
+        let visual = WorkspaceTab(.visual, location: note)
+        layout.add(first)
+        let group = try #require(layout.activeGroup)
+        layout.add(second)
+        layout.move(second.id, to: group, edge: .right)
+        layout.add(visual, group: group)
+
+        layout.select(second.id)
+        #expect(WorkspaceReadingContextResolver.resolve(
+            in: layout, lastFocused: firstBook, fallback: firstBook)?.workspaceIdentityPath
+            == secondBook.workspaceIdentityPath)
+
+        layout.select(visual.id)
+        #expect(WorkspaceReadingContextResolver.resolve(
+            in: layout, lastFocused: secondBook, fallback: firstBook)?.workspaceIdentityPath
+            == secondBook.workspaceIdentityPath)
+    }
+
+    @Test func closedLastFocusedBookIsNeverSelectedForNewNoteCreation() {
+        let firstBook = URL(fileURLWithPath: "/tmp/阅读上下文/第一本.epub")
+        let closedBook = URL(fileURLWithPath: "/tmp/阅读上下文/已关闭.epub")
+        let note = URL(fileURLWithPath: "/tmp/阅读上下文/笔记.md")
+        var layout = WorkspaceGridLayout()
+        layout.add(WorkspaceTab(.reading, location: firstBook))
+        let visual = WorkspaceTab(.visual, location: note)
+        layout.add(visual)
+        layout.select(visual.id)
+
+        #expect(WorkspaceReadingContextResolver.resolve(
+            in: layout, lastFocused: closedBook, fallback: nil) == nil)
+    }
+
+    @Test func companionNoteUsesTheWorkspaceRootThatOwnsTheFocusedBook() {
+        let theme = URL(fileURLWithPath: "/tmp/主题工程")
+        let firstRoot = theme.appendingPathComponent("第一组", isDirectory: true)
+        let secondRoot = theme.appendingPathComponent("第二组", isDirectory: true)
+        let focusedBook = secondRoot.appendingPathComponent("阅读资料/当前书.epub")
+
+        #expect(WorkspaceReadingNoteLinks.destinationRoot(
+            for: focusedBook, workspaceRoots: [firstRoot, secondRoot])?.workspaceIdentityPath
+            == secondRoot.workspaceIdentityPath)
+    }
+
     @Test func pendingEPUBRestoreKeepsItsReadingTabUntilParsingFinishes() {
         #expect(!WorkspaceReadingRestoration.shouldDiscardReadingTabs(
             hasLoadedDocument: false, isConvertingKindle: false, isOpeningEPUB: true, hasPendingPDF: false))

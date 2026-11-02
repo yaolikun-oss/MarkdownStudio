@@ -6,7 +6,15 @@ import SwiftUI
 struct WorkspaceEPUBNavigationTarget: Equatable {
     let chapterIndex: Int
     let fragment: String?
+    let readingAnchorID: String?
     let revision: Int
+
+    init(chapterIndex: Int, fragment: String?, readingAnchorID: String? = nil, revision: Int) {
+        self.chapterIndex = chapterIndex
+        self.fragment = fragment
+        self.readingAnchorID = readingAnchorID
+        self.revision = revision
+    }
 }
 
 enum WorkspaceReadingRestoration {
