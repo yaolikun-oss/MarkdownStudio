@@ -7,6 +7,7 @@ struct WorkspaceChapterLink: Codable, Equatable, Identifiable {
     var readingFingerprint: String
     var chapterHref: String
     var fragment: String?
+    var readingAnchorID: String?
     var chapterTitle: String
     var noteURL: URL
     var markerID: UUID
@@ -14,16 +15,17 @@ struct WorkspaceChapterLink: Codable, Equatable, Identifiable {
     var headingLevel: Int
 
     init(id: UUID = UUID(), readingURL: URL, readingFingerprint: String,
-         chapterHref: String, fragment: String?, chapterTitle: String,
+         chapterHref: String, fragment: String?, readingAnchorID: String? = nil, chapterTitle: String,
          noteURL: URL, markerID: UUID = UUID(), headingTitle: String,
          headingLevel: Int) {
         self.id = id
-        self.readingURL = readingURL.standardizedFileURL
+        self.readingURL = readingURL.workspaceIdentityURL
         self.readingFingerprint = readingFingerprint
         self.chapterHref = chapterHref
         self.fragment = fragment
+        self.readingAnchorID = readingAnchorID
         self.chapterTitle = chapterTitle
-        self.noteURL = noteURL.standardizedFileURL
+        self.noteURL = noteURL.workspaceIdentityURL
         self.markerID = markerID
         self.headingTitle = headingTitle
         self.headingLevel = headingLevel
@@ -33,31 +35,77 @@ struct WorkspaceChapterLink: Codable, Equatable, Identifiable {
 enum WorkspaceChapterLinks {
     static func upserting(_ link: WorkspaceChapterLink, into links: [WorkspaceChapterLink]) -> [WorkspaceChapterLink] {
         links.filter { existing in
-            // One EPUB target may legitimately be cited by several note
-            // headings. Some books also expose several TOC rows that resolve
-            // to the same XHTML/fragment. Only replacing the same note marker
-            // is an edit; a second citation must not erase the first one.
-            !sameNoteMarker(existing, link)
+            // A concrete TOC row has one current destination, so reconnecting
+            // a mistaken row updates that row. Different TOC rows remain
+            // independent even when the EPUB maps them to one XHTML page.
+            if link.readingAnchorID != nil { return !sameReadingAnchor(existing, link) }
+            // Legacy/current-position links have no TOC identity. Only replace
+            // the exact pair because identical XHTML targets may represent
+            // several distinct rows in older saved workspaces.
+            return !sameAssociation(existing, link)
         } + [link]
     }
 
     static func link(for readingURL: URL, chapterHref: String, fragment: String?,
+                     readingAnchorID: String? = nil,
                      in links: [WorkspaceChapterLink]) -> WorkspaceChapterLink? {
-        links.last {
-            $0.readingURL.standardizedFileURL == readingURL.standardizedFileURL
+        if let readingAnchorID,
+           let anchored = links.last(where: {
+               $0.readingURL.workspaceIdentityPath == readingURL.workspaceIdentityPath
+                   && $0.readingAnchorID == readingAnchorID
+           }) {
+            return anchored
+        }
+        return links.last {
+            $0.readingURL.workspaceIdentityPath == readingURL.workspaceIdentityPath
                 && $0.chapterHref == chapterHref && $0.fragment == fragment
         }
     }
 
     static func link(for noteURL: URL, markerID: UUID,
                      in links: [WorkspaceChapterLink]) -> WorkspaceChapterLink? {
-        links.first {
-            $0.noteURL.standardizedFileURL == noteURL.standardizedFileURL && $0.markerID == markerID
+        links.last {
+            $0.noteURL.workspaceIdentityPath == noteURL.workspaceIdentityPath && $0.markerID == markerID
         }
     }
 
-    private static func sameNoteMarker(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {
-        lhs.noteURL.standardizedFileURL == rhs.noteURL.standardizedFileURL && lhs.markerID == rhs.markerID
+    static func isMarkerReferenced(noteURL: URL, markerID: UUID,
+                                   in links: [WorkspaceChapterLink]) -> Bool {
+        links.contains {
+            $0.noteURL.workspaceIdentityPath == noteURL.workspaceIdentityPath && $0.markerID == markerID
+        }
+    }
+
+    private static func sameAssociation(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {
+        lhs.readingURL.workspaceIdentityPath == rhs.readingURL.workspaceIdentityPath
+            && lhs.chapterHref == rhs.chapterHref && lhs.fragment == rhs.fragment
+            && lhs.noteURL.workspaceIdentityPath == rhs.noteURL.workspaceIdentityPath
+            && lhs.markerID == rhs.markerID
+    }
+
+    private static func sameReadingAnchor(_ lhs: WorkspaceChapterLink, _ rhs: WorkspaceChapterLink) -> Bool {
+        lhs.readingURL.workspaceIdentityPath == rhs.readingURL.workspaceIdentityPath
+            && lhs.readingAnchorID != nil && lhs.readingAnchorID == rhs.readingAnchorID
+    }
+}
+
+enum WorkspaceEPUBTOCIdentity {
+    static func make(index: Int, level: Int, href: String, title: String) -> String {
+        "toc:\(index):\(level):\(href):\(title)"
+    }
+}
+
+extension URL {
+    /// File URLs can decode to distinct Foundation values depending on whether
+    /// they were created as a directory (a trailing slash) even though their
+    /// paths are identical. Workspace identities intentionally ignore that
+    /// representation detail.
+    var workspaceIdentityPath: String {
+        standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    var workspaceIdentityURL: URL {
+        URL(fileURLWithPath: workspaceIdentityPath)
     }
 }
 

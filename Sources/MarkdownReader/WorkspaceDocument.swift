@@ -3,7 +3,35 @@ import Foundation
 struct WorkspaceReadingNoteLink: Codable, Equatable, Identifiable {
     var readingURL: URL
     var noteURL: URL
-    var id: String { readingURL.standardizedFileURL.path }
+    var id: String { readingURL.workspaceIdentityPath }
+
+    init(readingURL: URL, noteURL: URL) {
+        self.readingURL = readingURL.workspaceIdentityURL
+        self.noteURL = noteURL.workspaceIdentityURL
+    }
+}
+
+enum WorkspaceReadingNoteLinks {
+    /// A reading source owns one companion note. Older builds could encode the
+    /// same unpacked EPUB twice because Foundation distinguished directory and
+    /// file-style URLs with the same path. Prefer an existing note and remove
+    /// the stale duplicate that otherwise blocks workspace autosave.
+    static func normalized(_ links: [WorkspaceReadingNoteLink],
+                           fileManager: FileManager = .default) -> [WorkspaceReadingNoteLink] {
+        var order: [String] = []
+        var groups: [String: [WorkspaceReadingNoteLink]] = [:]
+        for link in links {
+            let key = link.readingURL.workspaceIdentityPath
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(WorkspaceReadingNoteLink(
+                readingURL: link.readingURL, noteURL: link.noteURL))
+        }
+        return order.compactMap { key in
+            guard let candidates = groups[key], !candidates.isEmpty else { return nil }
+            return candidates.first(where: { fileManager.fileExists(atPath: $0.noteURL.path) })
+                ?? candidates.first
+        }
+    }
 }
 
 /// A workspace stores references and layout only; document contents remain in
@@ -36,8 +64,15 @@ struct WorkspaceDocument: Codable, Equatable {
         folders = try container.decodeIfPresent([URL].self, forKey: .folders) ?? []
         files = try container.decodeIfPresent([URL].self, forKey: .files) ?? []
         layout = try container.decode(WorkspaceGridLayout.self, forKey: .layout)
-        readingNotes = try container.decodeIfPresent([WorkspaceReadingNoteLink].self, forKey: .readingNotes) ?? []
-        chapterLinks = try container.decodeIfPresent([WorkspaceChapterLink].self, forKey: .chapterLinks) ?? []
+        let decodedNotes = try container.decodeIfPresent([WorkspaceReadingNoteLink].self, forKey: .readingNotes) ?? []
+        readingNotes = WorkspaceReadingNoteLinks.normalized(decodedNotes)
+        chapterLinks = (try container.decodeIfPresent([WorkspaceChapterLink].self, forKey: .chapterLinks) ?? [])
+            .map { link in
+                var normalized = link
+                normalized.readingURL = link.readingURL.workspaceIdentityURL
+                normalized.noteURL = link.noteURL.workspaceIdentityURL
+                return normalized
+            }
     }
 
     var isValid: Bool {
@@ -51,7 +86,7 @@ struct WorkspaceDocument: Codable, Equatable {
         }
         var seen = Set<String>()
         return resources.filter { url in
-            let path = url.standardizedFileURL.path
+            let path = url.workspaceIdentityPath
             guard seen.insert(path).inserted else { return false }
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return true }

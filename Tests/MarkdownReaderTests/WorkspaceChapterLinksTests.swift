@@ -84,10 +84,86 @@ import Testing
         links = WorkspaceChapterLinks.upserting(unrelated, into: links)
         links = WorkspaceChapterLinks.upserting(moved, into: links)
 
-        #expect(links.count == 2)
-        #expect(!links.contains(where: { $0.id == first.id }))
+        #expect(links.count == 3)
+        #expect(links.contains(where: { $0.id == first.id }))
         #expect(links.contains(where: { $0.id == unrelated.id }))
         #expect(links.contains(where: { $0.id == moved.id }))
+    }
+
+    @Test func severalOriginalChaptersCanPointToTheSameNoteHeading() {
+        let marker = UUID()
+        let chapterEight = makeLink(section: 8, href: "Text/eight.xhtml", fragment: nil, marker: marker)
+        let chapterSeven = makeLink(section: 7, href: "Text/seven.xhtml", fragment: nil, marker: marker)
+        var links = WorkspaceChapterLinks.upserting(chapterEight, into: [])
+        links = WorkspaceChapterLinks.upserting(chapterSeven, into: links)
+
+        #expect(links.count == 2)
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/eight.xhtml",
+                                          fragment: nil, in: links)?.id == chapterEight.id)
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/seven.xhtml",
+                                          fragment: nil, in: links)?.id == chapterSeven.id)
+        #expect(WorkspaceChapterLinks.link(for: note, markerID: marker,
+                                          in: links)?.id == chapterSeven.id)
+    }
+
+    @Test func trailingSlashDoesNotCreateAnotherBookIdentity() {
+        let directoryStyleBook = URL(fileURLWithPath: book.path, isDirectory: true)
+        let marker = UUID()
+        let first = makeLink(section: 8, href: "Text/eight.xhtml", fragment: nil, marker: marker)
+        let repeated = WorkspaceChapterLink(readingURL: directoryStyleBook, readingFingerprint: "new",
+            chapterHref: first.chapterHref, fragment: first.fragment, chapterTitle: first.chapterTitle,
+            noteURL: note, markerID: marker, headingTitle: first.headingTitle, headingLevel: first.headingLevel)
+        var links = WorkspaceChapterLinks.upserting(first, into: [])
+        links = WorkspaceChapterLinks.upserting(repeated, into: links)
+
+        #expect(links.count == 1)
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: first.chapterHref,
+                                          fragment: nil, in: links)?.id == repeated.id)
+    }
+
+    @Test func tocRowsSharingOneXHTMLRemainIndependentAndOneRowCanBeReconnected() {
+        let firstMarker = UUID()
+        let secondMarker = UUID()
+        let correctedMarker = UUID()
+        let rowSeven = WorkspaceEPUBTOCIdentity.make(index: 7, level: 0,
+            href: "Text/shared.xhtml", title: "七 万湖会议")
+        let rowEight = WorkspaceEPUBTOCIdentity.make(index: 8, level: 0,
+            href: "Text/shared.xhtml", title: "八 守法公民的责任")
+        let sevenWrong = makeLink(section: 7, href: "Text/shared.xhtml", fragment: nil,
+                                  marker: firstMarker, readingAnchorID: rowSeven)
+        let eight = makeLink(section: 8, href: "Text/shared.xhtml", fragment: nil,
+                             marker: secondMarker, readingAnchorID: rowEight)
+        let sevenCorrected = makeLink(section: 70, href: "Text/shared.xhtml", fragment: nil,
+                                      marker: correctedMarker, readingAnchorID: rowSeven)
+        var links = WorkspaceChapterLinks.upserting(sevenWrong, into: [])
+        links = WorkspaceChapterLinks.upserting(eight, into: links)
+        links = WorkspaceChapterLinks.upserting(sevenCorrected, into: links)
+
+        #expect(links.count == 2)
+        #expect(!links.contains(where: { $0.id == sevenWrong.id }))
+        #expect(links.contains(where: { $0.id == eight.id }))
+        #expect(links.contains(where: { $0.id == sevenCorrected.id }))
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/shared.xhtml", fragment: nil,
+                                          readingAnchorID: rowEight, in: links)?.id == eight.id)
+        #expect(WorkspaceChapterLinks.link(for: book, chapterHref: "Text/shared.xhtml", fragment: nil,
+                                          readingAnchorID: rowSeven, in: links)?.id == sevenCorrected.id)
+        #expect(WorkspaceChapterLinks.isMarkerReferenced(noteURL: note, markerID: secondMarker,
+                                                         in: links))
+        #expect(!WorkspaceChapterLinks.isMarkerReferenced(noteURL: note, markerID: firstMarker,
+                                                          in: links))
+    }
+
+    @Test func olderSavedLinkWithoutTOCIdentityStillDecodes() throws {
+        let link = makeLink(section: 8, href: "Text/eight.xhtml", fragment: nil, marker: UUID())
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(link)) as? [String: Any])
+        object.removeValue(forKey: "readingAnchorID")
+        let restored = try JSONDecoder().decode(
+            WorkspaceChapterLink.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        #expect(restored.readingAnchorID == nil)
+        #expect(restored.chapterHref == link.chapterHref)
     }
 
     @Test func explicitOutlineHeadingOverridesAStaleEditorCaret() throws {
@@ -140,9 +216,11 @@ import Testing
                                           fragment: "first", in: [link]) == nil)
     }
 
-    private func makeLink(section: Int, href: String, fragment: String?, marker: UUID) -> WorkspaceChapterLink {
+    private func makeLink(section: Int, href: String, fragment: String?, marker: UUID,
+                          readingAnchorID: String? = nil) -> WorkspaceChapterLink {
         WorkspaceChapterLink(readingURL: book, readingFingerprint: "fingerprint",
-            chapterHref: href, fragment: fragment, chapterTitle: "原文章节 \(section)",
+            chapterHref: href, fragment: fragment, readingAnchorID: readingAnchorID,
+            chapterTitle: "原文章节 \(section)",
             noteURL: note, markerID: marker, headingTitle: "长文档标题 \(section)", headingLevel: 2)
     }
 

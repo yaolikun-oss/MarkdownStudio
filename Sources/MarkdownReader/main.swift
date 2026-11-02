@@ -724,12 +724,13 @@ struct ReaderView: View {
 
     private func chapterLink(
         for readingURL: URL, document: EPUBPackageDocument,
-        target: (chapterIndex: Int, fragment: String?)
+        target: (chapterIndex: Int, fragment: String?), readingAnchorID: String? = nil
     ) -> WorkspaceChapterLink? {
         guard document.chapters.indices.contains(target.chapterIndex) else { return nil }
         let href = document.chapters[target.chapterIndex].href
         return WorkspaceChapterLinks.link(for: readingURL, chapterHref: href,
-                                          fragment: target.fragment, in: workspaceChapterLinks)
+                                          fragment: target.fragment, readingAnchorID: readingAnchorID,
+                                          in: workspaceChapterLinks)
     }
 
     private func currentWorkspaceEPUBLink(
@@ -742,16 +743,20 @@ struct ReaderView: View {
     }
 
     private func chapterLink(for heading: MarkdownBlock) -> WorkspaceChapterLink? {
+        chapterLinks(for: heading).last
+    }
+
+    private func chapterLinks(for heading: MarkdownBlock) -> [WorkspaceChapterLink] {
         guard let noteURL = activeWorkspaceMarkdownURL ?? selectedFile,
-              let session = documentSessions.session(for: noteURL) else { return nil }
+              let session = documentSessions.session(for: noteURL) else { return [] }
         let noteLinks = workspaceChapterLinks.filter {
-            $0.noteURL.standardizedFileURL == noteURL.standardizedFileURL
+            $0.noteURL.workspaceIdentityPath == noteURL.workspaceIdentityPath
         }
-        if let markerID = WorkspaceChapterMarker.markerID(after: heading, in: session.text),
-           let direct = noteLinks.first(where: { $0.markerID == markerID }) {
-            return direct
+        if let markerID = WorkspaceChapterMarker.markerID(after: heading, in: session.text) {
+            let direct = noteLinks.filter { $0.markerID == markerID }
+            if !direct.isEmpty { return direct }
         }
-        return noteLinks.first { link in
+        return noteLinks.filter { link in
             guard let linkedHeading = WorkspaceChapterMarker.heading(
                 for: link.markerID, blocks: blocks, source: session.text) else { return false }
             return linkedHeading.sourceLine == heading.sourceLine && linkedHeading.title == heading.title
@@ -827,7 +832,8 @@ struct ReaderView: View {
     private func bindChapter(
         readingURL: URL, document: EPUBPackageDocument,
         target: (chapterIndex: Int, fragment: String?), title: String,
-        heading requestedHeading: MarkdownBlock? = nil
+        heading requestedHeading: MarkdownBlock? = nil,
+        readingAnchorID: String? = nil
     ) {
         guard document.chapters.indices.contains(target.chapterIndex),
               let noteURL = activeWorkspaceMarkdownURL ?? selectedFile,
@@ -866,10 +872,20 @@ struct ReaderView: View {
                 let href = document.chapters[target.chapterIndex].href
                 let newLink = WorkspaceChapterLink(
                     readingURL: reading, readingFingerprint: fingerprint, chapterHref: href,
-                    fragment: target.fragment, chapterTitle: title, noteURL: note,
+                    fragment: target.fragment, readingAnchorID: readingAnchorID,
+                    chapterTitle: title, noteURL: note,
                     markerID: markerID, headingTitle: currentHeading.title ?? "未命名标题",
                     headingLevel: level)
+                let displacedLinks = workspaceChapterLinks.filter {
+                    guard let readingAnchorID else { return false }
+                    return $0.readingURL.workspaceIdentityPath == reading.workspaceIdentityPath
+                        && $0.readingAnchorID == readingAnchorID
+                }
                 workspaceChapterLinks = WorkspaceChapterLinks.upserting(newLink, into: workspaceChapterLinks)
+                for displaced in displacedLinks where displaced.markerID != markerID
+                    || displaced.noteURL.workspaceIdentityPath != note.workspaceIdentityPath {
+                    removeMarkerIfUnreferenced(displaced)
+                }
                 workspaceResourceFingerprints[reading.path] = fingerprint
                 refreshOutlineImmediately(for: session)
             } catch {
@@ -880,6 +896,13 @@ struct ReaderView: View {
 
     private func removeChapterLink(_ link: WorkspaceChapterLink) {
         workspaceChapterLinks.removeAll { $0.id == link.id }
+        removeMarkerIfUnreferenced(link)
+    }
+
+    private func removeMarkerIfUnreferenced(_ link: WorkspaceChapterLink) {
+        guard !WorkspaceChapterLinks.isMarkerReferenced(
+            noteURL: link.noteURL, markerID: link.markerID, in: workspaceChapterLinks
+        ) else { return }
         if let session = documentSessions.session(for: link.noteURL) {
             let cleaned = WorkspaceChapterMarker.removing(link.markerID, from: session.text)
             if cleaned != session.text {
@@ -1808,9 +1831,14 @@ struct ReaderView: View {
             Spacer()
         } else {
             List {
-                ForEach(Array(document.tableOfContents.enumerated()), id: \.element.id) { _, item in
+                ForEach(Array(document.tableOfContents.enumerated()), id: \.offset) { index, item in
                     let target = document.navigationTarget(for: item)
-                    let link = target.flatMap { chapterLink(for: readingURL, document: document, target: $0) }
+                    let readingAnchorID = WorkspaceEPUBTOCIdentity.make(
+                        index: index, level: item.level, href: item.href, title: item.title)
+                    let link = target.flatMap {
+                        chapterLink(for: readingURL, document: document, target: $0,
+                                    readingAnchorID: readingAnchorID)
+                    }
                     HStack(spacing: 3) {
                     Button {
                         activateWorkspaceArea(.outline)
@@ -1836,7 +1864,8 @@ struct ReaderView: View {
                     .contextMenu {
                         if let target {
                             Button(link == nil ? "关联到当前笔记标题" : "更新到当前笔记标题") {
-                                bindChapter(readingURL: readingURL, document: document, target: target, title: item.title)
+                                bindChapter(readingURL: readingURL, document: document, target: target,
+                                            title: item.title, readingAnchorID: readingAnchorID)
                             }
                         }
                         if let link {
@@ -1944,7 +1973,7 @@ struct ReaderView: View {
                                styles: (try? JSONDecoder().decode([HeadingStyle].self, from: previewStyle.headingStylesData)) ?? HeadingStyle.defaults,
                                outlineColors: (try? JSONDecoder().decode([String].self, from: previewStyle.outlineColorsData)) ?? Array(repeating: "#222222", count: 6),
                                fontScale: previewStyle.outlineFontScale,
-                               chapterLink: { chapterLink(for: $0) },
+                               chapterLinks: { chapterLinks(for: $0) },
                                onOpenChapter: openLinkedChapter,
                                onBindChapter: { bindCurrentChapter(to: $0) },
                                onRemoveChapterLink: removeChapterLink,
@@ -5201,14 +5230,14 @@ struct ReaderView: View {
 
     private func ensureCompanionNote(for readingURL: URL) throws -> URL? {
         guard isReadingResource(readingURL), let root = workspaceFolders.first?.standardizedFileURL else { return nil }
-        let canonicalReading = readingURL.standardizedFileURL
+        let canonicalReading = readingURL.workspaceIdentityURL
         let manager = FileManager.default
 
         let noteURL: URL
         if let existing = workspaceReadingNotes.first(where: {
-            $0.readingURL.standardizedFileURL == canonicalReading
+            $0.readingURL.workspaceIdentityPath == canonicalReading.workspaceIdentityPath
         }) {
-            noteURL = existing.noteURL.standardizedFileURL
+            noteURL = existing.noteURL.workspaceIdentityURL
         } else {
             let directory = root.appendingPathComponent("笔记/书籍笔记", isDirectory: true)
             try manager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -5243,8 +5272,8 @@ struct ReaderView: View {
     private func companionNoteURL(for readingURL: URL) -> URL? {
         let reading = readingURL.standardizedFileURL
         return workspaceReadingNotes.first(where: {
-            $0.readingURL.standardizedFileURL == reading
-        })?.noteURL.standardizedFileURL
+            $0.readingURL.workspaceIdentityPath == reading.workspaceIdentityPath
+        })?.noteURL.workspaceIdentityURL
     }
 
     private var activeReadingURLForNoteCreation: URL? {
@@ -6562,7 +6591,7 @@ struct HeadingRow: View {
     let styles: [HeadingStyle]
     let outlineColors: [String]
     let fontScale: Double
-    let chapterLink: (MarkdownBlock) -> WorkspaceChapterLink?
+    let chapterLinks: (MarkdownBlock) -> [WorkspaceChapterLink]
     let onOpenChapter: (WorkspaceChapterLink) -> Void
     let onBindChapter: (MarkdownBlock) -> Void
     let onRemoveChapterLink: (WorkspaceChapterLink) -> Void
@@ -6592,7 +6621,7 @@ struct HeadingRow: View {
     }
 
     var body: some View {
-        let linkedChapter = chapterLink(heading)
+        let linkedChapters = chapterLinks(heading)
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
                 if !children.isEmpty {
@@ -6606,11 +6635,24 @@ struct HeadingRow: View {
                         .foregroundStyle(Color(hex: outlineColors[levelIndex]))
                         .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
                         .padding(.vertical, 2)
-                if let linkedChapter {
+                if linkedChapters.count == 1, let linkedChapter = linkedChapters.first {
                     Button { onOpenChapter(linkedChapter) } label: {
                         Image(systemName: "link.circle.fill").foregroundStyle(Color.accentColor)
                     }
                     .buttonStyle(.plain).help("打开关联原文：\(linkedChapter.chapterTitle)")
+                } else if linkedChapters.count > 1 {
+                    Menu {
+                        ForEach(linkedChapters) { link in
+                            Button(link.chapterTitle) { onOpenChapter(link) }
+                        }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: "link.circle.fill")
+                            Text("\(linkedChapters.count)").font(.system(size: 9, weight: .semibold))
+                        }.foregroundStyle(Color.accentColor)
+                    }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .help("此标题关联了 \(linkedChapters.count) 处原文")
                 }
             }
             .padding(.leading, CGFloat(levelIndex * 14))
@@ -6619,20 +6661,24 @@ struct HeadingRow: View {
             .onTapGesture(count: 2) { toggleExpansion() }
             .onTapGesture(count: 1) { onSelect(heading.id) }
             .contextMenu {
-                Button(linkedChapter == nil ? "关联当前原文章节" : "更新为当前原文章节") {
+                Button("关联当前原文章节") {
                     onBindChapter(heading)
                 }
-                if let linkedChapter {
-                    Button("打开关联原文章节") { onOpenChapter(linkedChapter) }
+                if !linkedChapters.isEmpty {
+                    ForEach(linkedChapters) { link in
+                        Button("打开：\(link.chapterTitle)") { onOpenChapter(link) }
+                    }
                     Divider()
-                    Button("解除章节关联", role: .destructive) { onRemoveChapterLink(linkedChapter) }
+                    ForEach(linkedChapters) { link in
+                        Button("解除：\(link.chapterTitle)", role: .destructive) { onRemoveChapterLink(link) }
+                    }
                 }
             }
             if expanded.contains(heading.id) {
                 ForEach(children) { child in
                     HeadingRow(heading: child, allHeadings: allHeadings, expanded: $expanded,
                                styles: styles, outlineColors: outlineColors, fontScale: fontScale,
-                               chapterLink: chapterLink, onOpenChapter: onOpenChapter,
+                               chapterLinks: chapterLinks, onOpenChapter: onOpenChapter,
                                onBindChapter: onBindChapter, onRemoveChapterLink: onRemoveChapterLink,
                                onSelect: onSelect)
                 }

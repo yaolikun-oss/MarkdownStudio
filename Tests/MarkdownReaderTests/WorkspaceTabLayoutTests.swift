@@ -82,6 +82,30 @@ struct WorkspaceTabLayoutTests {
         let legacyData = try JSONSerialization.data(withJSONObject: legacy)
         #expect(try JSONDecoder().decode(WorkspaceDocument.self, from: legacyData).readingNotes.isEmpty)
     }
+
+    @Test func duplicateDirectoryStyleReadingNotePrefersExistingNoteAndUnblocksSave() throws {
+        let root = URL(fileURLWithPath: "/tmp/重复阅读资料", isDirectory: true)
+        let readingFile = root.appendingPathComponent("书.epub")
+        let readingDirectoryStyle = URL(fileURLWithPath: readingFile.path, isDirectory: true)
+        let existingNote = root.appendingPathComponent("书.md")
+        let missingNote = root.appendingPathComponent("书-2.md")
+        let manager = FileManager.default
+        try? manager.removeItem(at: root)
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: root) }
+        try Data("book".utf8).write(to: readingFile)
+        try Data("# note".utf8).write(to: existingNote)
+
+        let document = WorkspaceDocument(folders: [root], layout: WorkspaceGridLayout(), readingNotes: [
+            WorkspaceReadingNoteLink(readingURL: readingFile, noteURL: existingNote),
+            WorkspaceReadingNoteLink(readingURL: readingDirectoryStyle, noteURL: missingNote)
+        ])
+        let restored = try JSONDecoder().decode(WorkspaceDocument.self, from: JSONEncoder().encode(document))
+
+        #expect(restored.readingNotes.count == 1)
+        #expect(restored.readingNotes[0].noteURL.workspaceIdentityPath == existingNote.workspaceIdentityPath)
+        #expect(restored.missingFiles.isEmpty)
+    }
     @Test func savedWorkspaceDetectsReferencesLostAfterOpening() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
