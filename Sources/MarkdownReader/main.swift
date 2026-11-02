@@ -1511,7 +1511,7 @@ struct ReaderView: View {
             .help("整体设置（⌘,）")
             .accessibilityLabel("整体设置")
         }
-        .padding(.top, 54)
+        .padding(.top, 40)
         .padding(.bottom, 12)
         .frame(width: 50)
         .background(Color(nsColor: .controlBackgroundColor))
