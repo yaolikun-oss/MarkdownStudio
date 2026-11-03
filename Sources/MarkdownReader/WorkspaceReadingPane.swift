@@ -45,8 +45,14 @@ struct WorkspaceReadingPane: View {
     /// parsing the same book a second time for the reading pane.
     let initialEPUBDocument: EPUBPackageDocument?
     let epubNavigationTarget: WorkspaceEPUBNavigationTarget?
+    let epubAnnotations: [EPUBAnnotation]
+    let epubAnnotationJumpID: String?
+    let epubAnnotationJumpRequest: Int
     let onEPUBLoaded: (EPUBPackageDocument) -> Void
     let onEPUBChapterChanged: (Int, String?) -> Void
+    let onEPUBTextSelection: (EPUBTextAnchor?) -> Void
+    let onEditEPUBAnnotation: (String) -> Void
+    let onDeleteEPUBAnnotation: (String) -> Void
     @Binding var chapter: Int
     @Binding var pdfZoomPercent: Double
     @Binding var officeZoomPercent: Double
@@ -77,12 +83,12 @@ struct WorkspaceReadingPane: View {
                     bodyColorHex: bodyColorHex, annotationFontSize: annotationFontSize,
                     annotationFontFamily: annotationFontFamily, annotationTextColorHex: annotationTextColorHex,
                     backgroundColorHex: backgroundHex, lineHeight: lineHeight,
-                    scrollFragment: scrollFragment, scrollRequest: navigationRequest, annotations: [],
-                    annotationJumpID: nil, annotationJumpRequest: 0, savedPosition: nil,
+                    scrollFragment: scrollFragment, scrollRequest: navigationRequest, annotations: epubAnnotations,
+                    annotationJumpID: epubAnnotationJumpID, annotationJumpRequest: epubAnnotationJumpRequest, savedPosition: nil,
                     positionRestoreRequest: 0, isActive: isActive,
                     focusRequest: epubFocusRequest, onActivate: onActivate,
-                    onNavigateChapter: navigateChapter, onTextSelection: { _ in },
-                    onEditAnnotation: { _ in }, onDeleteAnnotation: { _ in },
+                    onNavigateChapter: navigateChapter, onTextSelection: onEPUBTextSelection,
+                    onEditAnnotation: onEditEPUBAnnotation, onDeleteAnnotation: onDeleteEPUBAnnotation,
                     onReadPosition: { _, _ in }, onBodyChange: { _ in })
             } else if OfficeReadingFormat.supports(url) {
                 OfficeDocumentReader(url: url, state: officeState, zoomPercent: $officeZoomPercent, onActivate: onActivate)

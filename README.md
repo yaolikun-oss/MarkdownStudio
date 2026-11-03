@@ -24,6 +24,8 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 **0.8.27 Preview** 修复 EPUB 左右方向键焦点回归：点击原书标签、左侧目录或工具栏翻章后，焦点会返回具体 EPUB 阅读视图；Markdown 编辑器继续保留自己的方向键，详见 [0.8.27 修复说明](docs/releases/0.8.27-preview.md)。
 
+**0.8.28 Preview** 恢复多文档工作区中的 EPUB 注释：每本书独立加载、显示和保存高亮、下划线与文字备注，工具栏、快捷键、注释列表和原文跳转重新接入当前 EPUB 标签，详见 [0.8.28 修复说明](docs/releases/0.8.28-preview.md)。
+
 **0.8.19 Preview** 修复连续建立第二条章节关联时覆盖第一条、同一 EPUB 页面内多个小节串联的问题，详见 [0.8.19 修复说明](docs/releases/0.8.19-preview.md)。
 
 ## Build and open

@@ -419,8 +419,15 @@ private enum SidebarOutlineTab: String, CaseIterable {
     }
 }
 
+private struct EPUBAnnotationSheetContext {
+    let sourceURL: URL?
+    let anchor: EPUBTextAnchor
+}
+
 private enum ReaderSheetRoute: Identifiable {
-    case settings, keyboardShortcuts, tableInsertion, webAddress, webBookmark(WebBookmark), epubAnnotationComposer, epubAnnotationList
+    case settings, keyboardShortcuts, tableInsertion, webAddress, webBookmark(WebBookmark)
+    case epubAnnotationComposer(EPUBAnnotationSheetContext)
+    case epubAnnotationList(URL?)
 
     var id: String {
         switch self {
@@ -429,8 +436,10 @@ private enum ReaderSheetRoute: Identifiable {
         case .tableInsertion: "tableInsertion"
         case .webAddress: "webAddress"
         case .webBookmark(let bookmark): "webBookmark-\(bookmark.id)"
-        case .epubAnnotationComposer: "epubAnnotationComposer"
-        case .epubAnnotationList: "epubAnnotationList"
+        case .epubAnnotationComposer(let context):
+            "epubAnnotationComposer-\(context.sourceURL?.standardizedFileURL.path ?? "legacy")"
+        case .epubAnnotationList(let sourceURL):
+            "epubAnnotationList-\(sourceURL?.standardizedFileURL.path ?? "legacy")"
         }
     }
 }
@@ -517,6 +526,12 @@ struct ReaderView: View {
     @State private var workspaceEPUBDocuments: [String: EPUBPackageDocument] = [:]
     @State private var workspaceEPUBChapters: [String: Int] = [:]
     @State private var workspaceEPUBNavigationTargets: [String: WorkspaceEPUBNavigationTarget] = [:]
+    @State private var workspaceEPUBAnnotations: [String: [EPUBAnnotation]] = [:]
+    @State private var workspaceEPUBSelections: [String: EPUBTextAnchor] = [:]
+    @State private var workspaceEPUBAnnotationJumpIDs: [String: String] = [:]
+    @State private var workspaceEPUBAnnotationJumpRequests: [String: Int] = [:]
+    @State private var workspaceEPUBDocumentIDs: [String: String] = [:]
+    @State private var workspaceEPUBAnnotationLoading: Set<String> = []
     @State private var workspaceMarkdownNavigationTargets: [String: WorkspaceMarkdownNavigationTarget] = [:]
     @State private var workspaceMarkdownSourceLines: [String: Int] = [:]
     @State private var workspaceExplicitHeadings: [String: WorkspaceMarkdownHeadingReference] = [:]
@@ -1312,22 +1327,33 @@ struct ReaderView: View {
                 WebAddressSheet(initialAddress: webBrowser.currentURL?.absoluteString ?? "") { url in open(url) }
             case .webBookmark(let bookmark):
                 WebBookmarkEditorSheet(bookmark: bookmark, onSave: saveWebBookmark)
-            case .epubAnnotationComposer:
-                if let anchor = epubEditingAnnotation?.anchor ?? epubSelection {
-                    EPUBAnnotationComposer(anchor: anchor, existing: epubEditingAnnotation) { note, colorHex, markStyle in
+            case .epubAnnotationComposer(let context):
+                EPUBAnnotationComposer(anchor: context.anchor, existing: epubEditingAnnotation) { note, colorHex, markStyle in
+                    if let workspaceURL = context.sourceURL {
+                        saveWorkspaceEPUBAnnotation(note: note, colorHex: colorHex,
+                                                    markStyle: markStyle, for: workspaceURL)
+                    } else {
                         saveEPUBAnnotation(note: note, colorHex: colorHex, markStyle: markStyle)
                     }
-                } else {
-                    EmptyView()
                 }
-            case .epubAnnotationList:
-                EPUBAnnotationListSheet(annotations: epubAnnotations, onSelect: jumpToEPUBAnnotation,
+            case .epubAnnotationList(let workspaceURL):
+                let annotations = workspaceURL.map { workspaceEPUBAnnotations[workspaceEPUBKey($0)] ?? [] }
+                    ?? epubAnnotations
+                EPUBAnnotationListSheet(annotations: annotations, onSelect: { annotation in
+                                            if let workspaceURL { jumpToWorkspaceEPUBAnnotation(annotation, for: workspaceURL) }
+                                            else { jumpToEPUBAnnotation(annotation) }
+                                        },
                                         onEdit: { annotation in
                                             epubEditingAnnotation = annotation
                                             activeSheet = nil
-                                            DispatchQueue.main.async { activeSheet = .epubAnnotationComposer }
+                                            let context = EPUBAnnotationSheetContext(
+                                                sourceURL: workspaceURL, anchor: annotation.anchor)
+                                            DispatchQueue.main.async { activeSheet = .epubAnnotationComposer(context) }
                                         },
-                                        onDelete: deleteEPUBAnnotation)
+                                        onDelete: { annotation in
+                                            if let workspaceURL { deleteWorkspaceEPUBAnnotation(annotation, for: workspaceURL) }
+                                            else { deleteEPUBAnnotation(annotation) }
+                                        })
             }
         }
         .alert("文档有未保存的修改", isPresented: $showUnsavedAlert) {
@@ -2325,6 +2351,25 @@ struct ReaderView: View {
                     .buttonStyle(.plain).disabled(context.chapter >= context.document.chapters.count - 1)
                     .help("下一章 / 下一页（→）")
                     .toolbarHint("下一章 / 下一页 · →")
+                Button { beginWorkspaceEPUBAnnotation(for: context.url) } label: {
+                    Image(systemName: "highlighter").font(.system(size: 13)).frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .disabled(workspaceEPUBSelections[workspaceEPUBKey(context.url)] == nil)
+                .help(workspaceEPUBSelections[workspaceEPUBKey(context.url)] == nil
+                      ? "先在原书中选中文字，再添加注释（⇧⌘M）"
+                      : "为所选文字添加注释（⇧⌘M）")
+                .toolbarHint("选择原书文字后添加注释 · ⇧⌘M")
+                Button { showWorkspaceEPUBAnnotations(for: context.url) } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "text.book.closed").font(.system(size: 12))
+                        let count = workspaceEPUBAnnotations[workspaceEPUBKey(context.url)]?.count ?? 0
+                        if count > 0 { Text("\(count)").font(.system(size: 10, design: .rounded)) }
+                    }.frame(height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("查看 EPUB 注释（⌥⌘M）")
+                .toolbarHint("查看、修改或删除注释 · ⌥⌘M")
             } else if toolbarTargetsReading, (focusedWorkspaceArea == .outline ? lastContentFocus : focusedWorkspaceArea) == .epub, let epubDocument, !epubDocument.chapters.isEmpty {
                 Button {
                     epubCurrentChapter = max(0, epubCurrentChapter - 1)
@@ -2353,14 +2398,21 @@ struct ReaderView: View {
                 .disabled(epubCurrentChapter >= epubDocument.chapters.count - 1)
                 .help("下一章 / 下一页（→）")
                 .toolbarHint("下一章 / 下一页 · →")
-                Button { epubEditingAnnotation = nil; activeSheet = .epubAnnotationComposer } label: {
+                Button {
+                    guard let anchor = epubSelection else { return }
+                    epubEditingAnnotation = nil
+                    activeSheet = .epubAnnotationComposer(
+                        EPUBAnnotationSheetContext(sourceURL: nil, anchor: anchor))
+                } label: {
                     Image(systemName: "highlighter").font(.system(size: 13)).frame(width: 22, height: 22)
                 }
                 .buttonStyle(.plain)
                 .disabled(epubSelection == nil)
                 .help(epubSelection == nil ? "先在原书中选中文字，再添加注释（⇧⌘M）" : "为所选文字添加注释（⇧⌘M）")
                 .toolbarHint("选择原书文字后添加注释 · ⇧⌘M")
-                Button { activeSheet = .epubAnnotationList } label: {
+                Button {
+                    activeSheet = .epubAnnotationList(nil)
+                } label: {
                     HStack(spacing: 3) {
                         Image(systemName: "text.book.closed").font(.system(size: 12))
                         if !epubAnnotations.isEmpty { Text("\(epubAnnotations.count)").font(.system(size: 10, design: .rounded)) }
@@ -3137,17 +3189,34 @@ struct ReaderView: View {
                     initialEPUBDocument: workspaceEPUBDocuments[epubKey]
                         ?? (epubDocument?.sourceURL.standardizedFileURL == url.standardizedFileURL ? epubDocument : nil),
                     epubNavigationTarget: workspaceEPUBNavigationTargets[epubKey],
+                    epubAnnotations: workspaceEPUBAnnotations[epubKey] ?? [],
+                    epubAnnotationJumpID: workspaceEPUBAnnotationJumpIDs[epubKey],
+                    epubAnnotationJumpRequest: workspaceEPUBAnnotationJumpRequests[epubKey] ?? 0,
                     onEPUBLoaded: { document in
                         workspaceEPUBDocuments[epubKey] = document
+                        loadWorkspaceEPUBAnnotations(for: url)
                         if activeWorkspaceReadingURL?.path == epubKey { epubDocument = document }
                     },
                     onEPUBChapterChanged: { chapter, fragment in
                         workspaceEPUBChapters[epubKey] = chapter
+                        workspaceEPUBSelections.removeValue(forKey: epubKey)
                         let navigation = workspaceEPUBNavigationTargets[epubKey]
                         let anchorID = navigation?.chapterIndex == chapter && navigation?.fragment == fragment
                             ? navigation?.readingAnchorID : nil
                         followLinkedNote(for: url, document: workspaceEPUBDocuments[epubKey],
                                          chapter: chapter, fragment: fragment, readingAnchorID: anchorID)
+                    },
+                    onEPUBTextSelection: { selection in
+                        if let selection { workspaceEPUBSelections[epubKey] = selection }
+                        else { workspaceEPUBSelections.removeValue(forKey: epubKey) }
+                    },
+                    onEditEPUBAnnotation: { id in
+                        guard let annotation = workspaceEPUBAnnotations[epubKey]?.first(where: { $0.id == id }) else { return }
+                        beginWorkspaceEPUBAnnotationEdit(annotation, for: url)
+                    },
+                    onDeleteEPUBAnnotation: { id in
+                        guard let annotation = workspaceEPUBAnnotations[epubKey]?.first(where: { $0.id == id }) else { return }
+                        deleteWorkspaceEPUBAnnotation(annotation, for: url)
                     },
                     chapter: workspaceEPUBChapterBinding(for: url),
                     pdfZoomPercent: $pdfZoomPercent,
@@ -3781,7 +3850,8 @@ struct ReaderView: View {
         }, onTextSelection: { epubSelection = $0 }, onEditAnnotation: { id in
             guard let annotation = epubAnnotations.first(where: { $0.id == id }) else { return }
             epubEditingAnnotation = annotation
-            activeSheet = .epubAnnotationComposer
+            activeSheet = .epubAnnotationComposer(
+                EPUBAnnotationSheetContext(sourceURL: nil, anchor: annotation.anchor))
         }, onDeleteAnnotation: { id in
             guard let annotation = epubAnnotations.first(where: { $0.id == id }) else { return }
             deleteEPUBAnnotation(annotation)
@@ -3968,6 +4038,127 @@ struct ReaderView: View {
         } catch {
             saveError = "无法保存阅读资料：\(error.localizedDescription)"
         }
+    }
+
+    private func workspaceEPUBKey(_ url: URL) -> String { url.standardizedFileURL.path }
+
+    private func loadWorkspaceEPUBAnnotations(for url: URL) {
+        let source = url.standardizedFileURL
+        let key = workspaceEPUBKey(source)
+        guard workspaceEPUBDocumentIDs[key] == nil, !workspaceEPUBAnnotationLoading.contains(key) else { return }
+        workspaceEPUBAnnotationLoading.insert(key)
+        Task { @MainActor in
+            defer { workspaceEPUBAnnotationLoading.remove(key) }
+            do {
+                let identity = try await Task.detached(priority: .utility) {
+                    try ReadingDocumentIdentity.make(for: source)
+                }.value
+                guard workspaceEPUBDocuments[key] != nil else { return }
+                workspaceEPUBDocumentIDs[key] = identity
+                workspaceEPUBAnnotations[key] = try readingLibrary.loadAnnotations(
+                    documentID: identity, migratingLegacySidecarAt: source)
+            } catch {
+                guard workspaceEPUBDocuments[key] != nil else { return }
+                saveError = "无法加载此书的 EPUB 注释：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func beginWorkspaceEPUBAnnotation(for url: URL) {
+        let source = url.standardizedFileURL
+        guard let anchor = workspaceEPUBSelections[workspaceEPUBKey(source)] else { return }
+        epubEditingAnnotation = nil
+        activeSheet = .epubAnnotationComposer(
+            EPUBAnnotationSheetContext(sourceURL: source, anchor: anchor))
+    }
+
+    private func showWorkspaceEPUBAnnotations(for url: URL) {
+        epubEditingAnnotation = nil
+        activeSheet = .epubAnnotationList(url.standardizedFileURL)
+    }
+
+    private func beginWorkspaceEPUBAnnotationEdit(_ annotation: EPUBAnnotation, for url: URL) {
+        epubEditingAnnotation = annotation
+        activeSheet = .epubAnnotationComposer(
+            EPUBAnnotationSheetContext(sourceURL: url.standardizedFileURL, anchor: annotation.anchor))
+    }
+
+    private func saveWorkspaceEPUBAnnotation(
+        note: String, colorHex: String, markStyle: EPUBAnnotationMarkStyle, for url: URL
+    ) {
+        let source = url.standardizedFileURL
+        let key = workspaceEPUBKey(source)
+        guard let document = workspaceEPUBDocuments[key] else { return }
+        var updated = workspaceEPUBAnnotations[key] ?? []
+        if let existing = epubEditingAnnotation,
+           let index = updated.firstIndex(where: { $0.id == existing.id }) {
+            updated[index].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            updated[index].colorHex = colorHex
+            updated[index].markStyle = markStyle
+        } else {
+            guard let anchor = workspaceEPUBSelections[key] else { return }
+            let chapter = workspaceEPUBChapters[key] ?? 0
+            guard document.chapters.indices.contains(chapter) else { return }
+            updated.append(EPUBAnnotation(chapterHref: document.chapters[chapter].href,
+                                          anchor: anchor,
+                                          note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                                          colorHex: colorHex, markStyle: markStyle))
+        }
+        Task { @MainActor in
+            do {
+                let identity: String
+                if let known = workspaceEPUBDocumentIDs[key] { identity = known }
+                else {
+                    identity = try await Task.detached(priority: .utility) {
+                        try ReadingDocumentIdentity.make(for: source)
+                    }.value
+                    workspaceEPUBDocumentIDs[key] = identity
+                }
+                try readingLibrary.saveAnnotations(updated, documentID: identity)
+                workspaceEPUBAnnotations[key] = updated
+                workspaceEPUBSelections.removeValue(forKey: key)
+                epubEditingAnnotation = nil
+            } catch {
+                saveError = "无法保存注释：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func deleteWorkspaceEPUBAnnotation(_ annotation: EPUBAnnotation, for url: URL) {
+        let source = url.standardizedFileURL
+        let key = workspaceEPUBKey(source)
+        let updated = (workspaceEPUBAnnotations[key] ?? []).filter { $0.id != annotation.id }
+        Task { @MainActor in
+            do {
+                let identity: String
+                if let known = workspaceEPUBDocumentIDs[key] { identity = known }
+                else {
+                    identity = try await Task.detached(priority: .utility) {
+                        try ReadingDocumentIdentity.make(for: source)
+                    }.value
+                    workspaceEPUBDocumentIDs[key] = identity
+                }
+                try readingLibrary.saveAnnotations(updated, documentID: identity)
+                workspaceEPUBAnnotations[key] = updated
+            } catch {
+                saveError = "无法保存注释：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func jumpToWorkspaceEPUBAnnotation(_ annotation: EPUBAnnotation, for url: URL) {
+        let source = url.standardizedFileURL
+        let key = workspaceEPUBKey(source)
+        guard let document = workspaceEPUBDocuments[key],
+              let chapter = document.chapters.firstIndex(where: { $0.href == annotation.chapterHref }) else { return }
+        activateReadingDocumentForKeyboard(source)
+        workspaceEPUBChapters[key] = chapter
+        workspaceEPUBAnnotationJumpIDs[key] = annotation.id
+        workspaceEPUBAnnotationJumpRequests[key, default: 0] += 1
+        workspaceEPUBSelections.removeValue(forKey: key)
+        let revision = (workspaceEPUBNavigationTargets[key]?.revision ?? 0) + 1
+        workspaceEPUBNavigationTargets[key] = WorkspaceEPUBNavigationTarget(
+            chapterIndex: chapter, fragment: nil, revision: revision)
     }
 
     private func saveEPUBAnnotation(note: String, colorHex: String, markStyle: EPUBAnnotationMarkStyle) {
@@ -4546,6 +4737,12 @@ struct ReaderView: View {
         workspaceEPUBDocuments.removeValue(forKey: canonical.path)
         workspaceEPUBChapters.removeValue(forKey: canonical.path)
         workspaceEPUBNavigationTargets.removeValue(forKey: canonical.path)
+        workspaceEPUBAnnotations.removeValue(forKey: canonical.path)
+        workspaceEPUBSelections.removeValue(forKey: canonical.path)
+        workspaceEPUBAnnotationJumpIDs.removeValue(forKey: canonical.path)
+        workspaceEPUBAnnotationJumpRequests.removeValue(forKey: canonical.path)
+        workspaceEPUBDocumentIDs.removeValue(forKey: canonical.path)
+        workspaceEPUBAnnotationLoading.remove(canonical.path)
         workspaceMarkdownNavigationTargets.removeValue(forKey: canonical.path)
         workspaceMarkdownSourceLines.removeValue(forKey: canonical.path)
         workspaceExplicitHeadings.removeValue(forKey: canonical.path)
@@ -4961,13 +5158,22 @@ struct ReaderView: View {
         }
         ReaderActions.restoreEPUBNotebookLayoutHandler = { maximizedNotebookPane = nil }
         ReaderActions.addEPUBAnnotationHandler = {
-            guard epubDocument != nil, epubSelection != nil else { return }
+            if let context = activeWorkspaceEPUBContext {
+                beginWorkspaceEPUBAnnotation(for: context.url)
+                return
+            }
+            guard epubDocument != nil, let anchor = epubSelection else { return }
             epubEditingAnnotation = nil
-            activeSheet = .epubAnnotationComposer
+            activeSheet = .epubAnnotationComposer(
+                EPUBAnnotationSheetContext(sourceURL: nil, anchor: anchor))
         }
         ReaderActions.showEPUBAnnotationsHandler = {
+            if let context = activeWorkspaceEPUBContext {
+                showWorkspaceEPUBAnnotations(for: context.url)
+                return
+            }
             guard epubDocument != nil else { return }
-            activeSheet = .epubAnnotationList
+            activeSheet = .epubAnnotationList(nil)
         }
         ReaderActions.bindCurrentChapterHandler = { bindCurrentChapter() }
         ReaderActions.openLinkedNoteHandler = {
@@ -6570,6 +6776,12 @@ struct ReaderView: View {
         workspaceEPUBDocuments = [:]
         workspaceEPUBChapters = [:]
         workspaceEPUBNavigationTargets = [:]
+        workspaceEPUBAnnotations = [:]
+        workspaceEPUBSelections = [:]
+        workspaceEPUBAnnotationJumpIDs = [:]
+        workspaceEPUBAnnotationJumpRequests = [:]
+        workspaceEPUBDocumentIDs = [:]
+        workspaceEPUBAnnotationLoading = []
         workspaceMarkdownNavigationTargets = [:]
         workspaceMarkdownSourceLines = [:]
         workspaceExplicitHeadings = [:]
