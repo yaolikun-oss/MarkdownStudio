@@ -63,6 +63,8 @@ struct WorkspaceTabGroup<Content: View>: View {
     let move: (WorkspaceTab, UUID, WorkspaceDropEdge, Int?) -> Void
     let close: (WorkspaceTab) -> Void
     let detach: (WorkspaceTab, CGPoint) -> Void
+    let companionNoteActionTitle: (WorkspaceTab) -> String?
+    let performCompanionNoteAction: (WorkspaceTab) -> Void
     let addWeb: (UUID) -> Void
     let openFile: (URL, UUID, WorkspaceDropEdge) -> Void
     @ViewBuilder let content: (WorkspaceTab) -> Content
@@ -128,6 +130,10 @@ struct WorkspaceTabGroup<Content: View>: View {
                                 move(item, group.id, .center, index)
                             })
                             .contextMenu {
+                                if let actionTitle = companionNoteActionTitle(tab) {
+                                    Button(actionTitle) { performCompanionNoteAction(tab) }
+                                    Divider()
+                                }
                                 Button("拆分到左侧") { move(tab, group.id, .left, nil) }
                                 Button("拆分到右侧") { move(tab, group.id, .right, nil) }
                                 Button("拆分到上方") { move(tab, group.id, .top, nil) }

@@ -18,6 +18,8 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 **0.8.24 Preview** 修复多 EPUB 快速切换后创建配套笔记偶尔打开上一本书的问题：创建完成后直接打开本次返回的精确 Markdown 地址，不再通过可能被延迟焦点回调改变的全局阅读上下文重新推断，详见 [0.8.24 修复说明](docs/releases/0.8.24-preview.md)。
 
+**0.8.25 Preview** 在阅读资料标签的右键菜单中加入“创建对应 Markdown 笔记”与“打开对应 Markdown 笔记”。菜单动作直接绑定被右击的 EPUB，在多本书同时打开时不依赖当前焦点推断，详见 [0.8.25 功能说明](docs/releases/0.8.25-preview.md)。
+
 **0.8.19 Preview** 修复连续建立第二条章节关联时覆盖第一条、同一 EPUB 页面内多个小节串联的问题，详见 [0.8.19 修复说明](docs/releases/0.8.19-preview.md)。
 
 ## Build and open

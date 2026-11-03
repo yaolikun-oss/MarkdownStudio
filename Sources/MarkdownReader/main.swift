@@ -3042,6 +3042,23 @@ struct ReaderView: View {
             },
             select: selectWorkspaceTab, move: moveWorkspaceTab, close: closeWorkspaceTab,
             detach: detachWorkspaceTab,
+            companionNoteActionTitle: { tab in
+                guard tab.kind == .reading, let readingURL = tab.location else { return nil }
+                if let noteURL = companionNoteURL(for: readingURL),
+                   FileManager.default.fileExists(atPath: noteURL.path) {
+                    return "打开对应 Markdown 笔记"
+                }
+                return "创建对应 Markdown 笔记"
+            },
+            performCompanionNoteAction: { tab in
+                guard tab.kind == .reading, let readingURL = tab.location else { return }
+                if let noteURL = companionNoteURL(for: readingURL),
+                   FileManager.default.fileExists(atPath: noteURL.path) {
+                    activateCreatedCompanionNote(noteURL, for: readingURL)
+                } else {
+                    createCompanionNote(for: readingURL)
+                }
+            },
             addWeb: { groupID in
                 MarkdownVisualCommandHub.commitActiveEdits {
                     let id = webSessions.create()
