@@ -20,6 +20,8 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 **0.8.25 Preview** 在阅读资料标签的右键菜单中加入“创建对应 Markdown 笔记”与“打开对应 Markdown 笔记”。菜单动作直接绑定被右击的 EPUB，在多本书同时打开时不依赖当前焦点推断，详见 [0.8.25 功能说明](docs/releases/0.8.25-preview.md)。
 
+**0.8.26 Preview** 在左下活动栏增加键盘快捷键按钮和分类速查面板，并整理完整中文使用手册，详见 [0.8.26 使用手册](docs/Markdown-Studio-0.8.26-使用手册.md)。
+
 **0.8.19 Preview** 修复连续建立第二条章节关联时覆盖第一条、同一 EPUB 页面内多个小节串联的问题，详见 [0.8.19 修复说明](docs/releases/0.8.19-preview.md)。
 
 ## Build and open

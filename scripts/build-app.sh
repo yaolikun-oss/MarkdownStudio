@@ -24,6 +24,10 @@ lipo -create \
     "$INTEL_BUILD/out/Products/Release/MarkdownReader" \
     -output "$APP_PATH/Contents/MacOS/MarkdownReader"
 cp "$PROJECT_ROOT/Resources/AppIcon.icns" "$APP_PATH/Contents/Resources/AppIcon.icns"
+MANUAL_SOURCE="${MARKDOWN_STUDIO_MANUAL:-$PROJECT_ROOT/docs/Markdown-Studio-0.8.26-使用手册.md}"
+if [[ -f "$MANUAL_SOURCE" ]]; then
+    cp "$MANUAL_SOURCE" "$APP_PATH/Contents/Resources/Markdown Studio 使用手册.md"
+fi
 LICENSES="$APP_PATH/Contents/Resources/ThirdPartyLicenses"
 mkdir -p "$LICENSES"
 cp "$PROJECT_ROOT/.build/checkouts/swift-markdown/LICENSE.txt" "$LICENSES/Swift-Markdown-LICENSE.txt"
@@ -156,6 +160,9 @@ rm -rf "$STAGING"
 mkdir -p "$STAGING"
 cp -R "$APP_PATH" "$STAGING/$APP_DISPLAY_NAME.app"
 cp "${MARKDOWN_STUDIO_README:-$PROJECT_ROOT/README.md}" "$STAGING/Read Me.md"
+if [[ -f "$MANUAL_SOURCE" ]]; then
+    cp "$MANUAL_SOURCE" "$STAGING/Markdown Studio 使用手册.md"
+fi
 cp -R "$LICENSES" "$STAGING/Third-Party Licenses"
 ln -s /Applications "$STAGING/Applications"
 hdiutil create -volname "$APP_DISPLAY_NAME" -srcfolder "$STAGING" -ov -format UDZO \

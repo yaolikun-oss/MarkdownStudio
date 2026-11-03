@@ -175,6 +175,9 @@ struct MarkdownReaderApp: App {
                     ReaderActions.toggleSidebar()
                 }
                 .keyboardShortcut("1", modifiers: [.command, .option])
+                Divider()
+                Button("键盘快捷键…") { ReaderActions.openKeyboardShortcutsHandler?() }
+                    .keyboardShortcut("/", modifiers: [.command])
             }
         }
     }
@@ -199,6 +202,7 @@ enum ReaderActions {
     static var openDocumentHandler: ((URL) -> Void)?
     private(set) static var pendingOpenDocuments: [URL] = []
     static var openSettingsHandler: (() -> Void)?
+    static var openKeyboardShortcutsHandler: (() -> Void)?
     static var adjustBodySizeHandler: ((Double) -> Void)?
     static var resetBodySizeHandler: (() -> Void)?
     static var adjustTypographySizeHandler: ((Double) -> Void)?
@@ -416,11 +420,12 @@ private enum SidebarOutlineTab: String, CaseIterable {
 }
 
 private enum ReaderSheetRoute: Identifiable {
-    case settings, tableInsertion, webAddress, webBookmark(WebBookmark), epubAnnotationComposer, epubAnnotationList
+    case settings, keyboardShortcuts, tableInsertion, webAddress, webBookmark(WebBookmark), epubAnnotationComposer, epubAnnotationList
 
     var id: String {
         switch self {
         case .settings: "settings"
+        case .keyboardShortcuts: "keyboardShortcuts"
         case .tableInsertion: "tableInsertion"
         case .webAddress: "webAddress"
         case .webBookmark(let bookmark): "webBookmark-\(bookmark.id)"
@@ -1297,6 +1302,8 @@ struct ReaderView: View {
             switch $0 {
             case .settings:
                 overallSettingsView
+            case .keyboardShortcuts:
+                KeyboardShortcutReferenceView { activeSheet = nil }
             case .tableInsertion:
                 TableInsertionSheet { cells, formatted in insertTable(cells: cells, formatted: formatted) }
             case .webAddress:
@@ -1503,6 +1510,16 @@ struct ReaderView: View {
                 .accessibilityLabel(tab.title)
             }
             Spacer()
+            Button { activeSheet = .keyboardShortcuts } label: {
+                Image(systemName: "keyboard")
+                    .font(.system(size: 16, weight: .regular))
+                    .frame(width: 38, height: 38)
+                    .background(Color.clear, in: RoundedRectangle(cornerRadius: 9))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("键盘快捷键（⌘/）")
+            .accessibilityLabel("键盘快捷键")
             Button(action: openOverallSettings) {
                 Image(systemName: "gearshape")
                     .font(.system(size: 16, weight: .regular))
@@ -4846,6 +4863,7 @@ struct ReaderView: View {
         ReaderActions.webBackHandler = { webBrowser.goBack() }
         ReaderActions.webForwardHandler = { webBrowser.goForward() }
         ReaderActions.openSettingsHandler = { openOverallSettings() }
+        ReaderActions.openKeyboardShortcutsHandler = { activeSheet = .keyboardShortcuts }
         ReaderActions.adjustBodySizeHandler = { activeBodySizeBinding.wrappedValue = min(24, max(12, activeBodySizeBinding.wrappedValue + $0)) }
         ReaderActions.resetBodySizeHandler = { activeBodySizeBinding.wrappedValue = 15 }
         ReaderActions.adjustTypographySizeHandler = { amount in
