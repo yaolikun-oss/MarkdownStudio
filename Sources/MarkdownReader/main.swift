@@ -5408,13 +5408,36 @@ struct ReaderView: View {
                 return
             }
             persistWorkspaceGrid()
-            activateCompanionNote(for: readingURL, selectNote: true)
-            if activeWorkspaceMarkdownURL?.standardizedFileURL != noteURL.standardizedFileURL,
-               let session = documentSessions.session(for: noteURL) {
-                activateWorkspaceMarkdownSession(session, mode: .visual)
-            }
+            // The button is rendered for one concrete readingURL and
+            // ensureCompanionNote returns its concrete noteURL. Open that exact
+            // result. Re-resolving through the mutable global reading context
+            // here can select the previous book when WebView focus callbacks
+            // arrive immediately after a fast tab/sidebar switch.
+            activateCreatedCompanionNote(noteURL, for: readingURL)
         } catch {
             saveError = "无法创建配套 Markdown 笔记：\(error.localizedDescription)"
+        }
+    }
+
+    private func activateCreatedCompanionNote(_ noteURL: URL, for readingURL: URL) {
+        let canonicalNote = noteURL.workspaceIdentityURL
+        lastFocusedWorkspaceReadingURL = readingURL.workspaceIdentityURL
+        guard let session = documentSessions.session(for: canonicalNote) else {
+            saveError = "配套笔记已经创建，但无法打开：\(canonicalNote.lastPathComponent)"
+            return
+        }
+        let tab: WorkspaceTab
+        if let existing = workspaceTabs.allTabs.first(where: {
+            $0.kind == .visual && $0.location?.workspaceIdentityPath == canonicalNote.workspaceIdentityPath
+        }) {
+            tab = existing
+        } else {
+            tab = WorkspaceTab(.visual, location: canonicalNote)
+            workspaceTabs.add(tab)
+        }
+        selectWorkspaceTab(tab)
+        if activeWorkspaceMarkdownURL?.workspaceIdentityPath != canonicalNote.workspaceIdentityPath {
+            activateWorkspaceMarkdownSession(session, mode: .visual)
         }
     }
 
