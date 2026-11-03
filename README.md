@@ -22,6 +22,8 @@ A quiet Markdown reader and source editor for macOS. It takes visual cues from M
 
 **0.8.26 Preview** 在左下活动栏增加键盘快捷键按钮和分类速查面板，并整理完整中文使用手册，详见 [0.8.26 使用手册](docs/Markdown-Studio-0.8.26-使用手册.md)。
 
+**0.8.27 Preview** 修复 EPUB 左右方向键焦点回归：点击原书标签、左侧目录或工具栏翻章后，焦点会返回具体 EPUB 阅读视图；Markdown 编辑器继续保留自己的方向键，详见 [0.8.27 修复说明](docs/releases/0.8.27-preview.md)。
+
 **0.8.19 Preview** 修复连续建立第二条章节关联时覆盖第一条、同一 EPUB 页面内多个小节串联的问题，详见 [0.8.19 修复说明](docs/releases/0.8.19-preview.md)。
 
 ## Build and open

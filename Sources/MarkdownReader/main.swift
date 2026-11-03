@@ -618,6 +618,7 @@ struct ReaderView: View {
     @State private var epubHasChanges = false
     @State private var epubTargetFragment: String?
     @State private var epubNavigationRequest = 0
+    @State private var epubFocusRequest = 0
     @State private var epubAnnotations: [EPUBAnnotation] = []
     @State private var epubSelection: EPUBTextAnchor?
     @State private var epubEditingAnnotation: EPUBAnnotation?
@@ -713,6 +714,7 @@ struct ReaderView: View {
     ) {
         let next = context.chapter + offset
         guard context.document.chapters.indices.contains(next) else { return }
+        activateReadingDocumentForKeyboard(context.url)
         let key = context.url.path
         workspaceEPUBChapters[key] = next
         let revision = (workspaceEPUBNavigationTargets[key]?.revision ?? 0) + 1
@@ -1943,9 +1945,9 @@ struct ReaderView: View {
                     }
                     HStack(spacing: 3) {
                     Button {
-                        activateWorkspaceArea(.outline)
                         if let target {
                             onSelect((target.chapterIndex, target.fragment, readingAnchorID))
+                            activateReadingDocumentForKeyboard(readingURL)
                         }
                     } label: {
                         Text(item.title).lineLimit(2)
@@ -2330,6 +2332,7 @@ struct ReaderView: View {
                     epubSelection = nil
                     epubAnnotationJumpID = nil
                     epubNavigationRequest += 1
+                    requestLegacyEPUBFocus()
                 } label: { Image(systemName: "chevron.left") }
                 .buttonStyle(.plain)
                 .disabled(epubCurrentChapter == 0)
@@ -2344,6 +2347,7 @@ struct ReaderView: View {
                     epubSelection = nil
                     epubAnnotationJumpID = nil
                     epubNavigationRequest += 1
+                    requestLegacyEPUBFocus()
                 } label: { Image(systemName: "chevron.right") }
                 .buttonStyle(.plain)
                 .disabled(epubCurrentChapter >= epubDocument.chapters.count - 1)
@@ -3763,6 +3767,7 @@ struct ReaderView: View {
                         annotationJumpRequest: epubAnnotationJumpRequest,
                         savedPosition: savedEPUBPosition,
                         positionRestoreRequest: epubPositionRestoreRequest,
+                        focusRequest: epubFocusRequest,
                         onActivate: { activateWorkspaceArea(.epub) },
                         onNavigateChapter: { offset in
             let target = epubCurrentChapter + offset
@@ -3772,6 +3777,7 @@ struct ReaderView: View {
             epubSelection = nil
             epubAnnotationJumpID = nil
             epubNavigationRequest += 1
+            requestLegacyEPUBFocus()
         }, onTextSelection: { epubSelection = $0 }, onEditAnnotation: { id in
             guard let annotation = epubAnnotations.first(where: { $0.id == id }) else { return }
             epubEditingAnnotation = annotation
@@ -5979,6 +5985,34 @@ struct ReaderView: View {
         epubSelection = nil
         epubAnnotationJumpID = nil
         epubNavigationRequest += 1
+        requestLegacyEPUBFocus()
+    }
+
+    /// The visible reading pane and the native keyboard first responder are
+    /// separate states on macOS. A TOC row or toolbar button can leave focus in
+    /// the sidebar even though the EPUB is still the selected document. Select
+    /// the concrete reading tab before returning focus to its retained WebView.
+    private func activateReadingDocumentForKeyboard(_ readingURL: URL) {
+        let canonical = readingURL.workspaceIdentityURL
+        let matchingTab = workspaceTabs.allTabs.first(where: {
+            $0.kind == .reading && $0.location?.workspaceIdentityPath == canonical.workspaceIdentityPath
+        })
+        if let matchingTab {
+            workspaceTabs.select(matchingTab.id)
+            activateWorkspaceReading(canonical)
+        }
+        activateWorkspaceArea(readingArea(for: canonical))
+        if matchingTab != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { focusReadingAfterLayout() }
+        } else if readingArea(for: canonical) == .epub {
+            requestLegacyEPUBFocus()
+        }
+    }
+
+    private func requestLegacyEPUBFocus() {
+        activateWorkspaceArea(.epub)
+        epubFocusRequest += 1
+        DispatchQueue.main.async { focusReadingAfterLayout() }
     }
 
     private func commitReaderWidthInput() {
