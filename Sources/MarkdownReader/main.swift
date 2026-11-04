@@ -1315,6 +1315,13 @@ struct ReaderView: View {
                 editorFocusRequest += 1
                 focusEditorAfterTableInsert = false
             }
+            // WebKit's internal content view is not always restored as the
+            // native first responder after an annotation/settings sheet. The
+            // active workspace area is the durable focus owner, so return
+            // keyboard focus to its retained reader once the sheet is gone.
+            if [.pdf, .epub, .web, .office].contains(focusedWorkspaceArea) {
+                DispatchQueue.main.async { focusReadingAfterLayout() }
+            }
         }) {
             switch $0 {
             case .settings:
