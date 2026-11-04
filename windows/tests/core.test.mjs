@@ -37,6 +37,30 @@ test("preferences clamp corrupt sizes and reject dangerous bookmark URLs", () =>
   assert.equal(p.styles.source.lineHeight, 1.2);
   assert.deepEqual(p.bookmarks, []);
 });
+test("workspace path and EPUB annotations survive preference normalization safely", () => {
+  const p = normalizePreferences({
+    workspace: "C:\\Study\\theme.mdworkspace",
+    annotations: {
+      "C:\\Study\\book.epub": [
+        {
+          id: "a1",
+          cfi: "epubcfi(/6/2!/4/2/1:0)",
+          quote: "原文摘录",
+          note: "自己的备注",
+          color: "#ffee88",
+          style: "underline",
+          createdAt: 10,
+          updatedAt: 20,
+        },
+        { id: "bad" },
+      ],
+    },
+  });
+  assert.equal(p.workspace, "C:\\Study\\theme.mdworkspace");
+  assert.equal(p.annotations["C:\\Study\\book.epub"].length, 1);
+  assert.equal(p.annotations["C:\\Study\\book.epub"][0].note, "自己的备注");
+  assert.equal(p.annotations["C:\\Study\\book.epub"][0].style, "underline");
+});
 test("atomic save retains Unicode source and no temporary files", async () => {
   const root = await temp();
   try {

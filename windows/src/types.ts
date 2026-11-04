@@ -9,6 +9,30 @@ export type OpenFile = {
   hash?: string;
   converted?: boolean;
 };
+export type EPUBAnnotation = {
+  id: string;
+  cfi: string;
+  quote: string;
+  note: string;
+  color: string;
+  style: "highlight" | "underline";
+  createdAt: number;
+  updatedAt: number;
+};
+export type WorkspaceFile = {
+  name: string;
+  path: string;
+  kind: "note" | "reading";
+  format: string;
+  relativePath: string;
+};
+export type WorkspaceProject = {
+  version: 1;
+  name: string;
+  manifestPath: string;
+  root: string;
+  files: WorkspaceFile[];
+};
 export type Style = {
   fontSize: number;
   lineHeight: number;
@@ -37,6 +61,8 @@ export type Preferences = {
   }[];
   bookmarks: { title: string; url: string }[];
   positions: Record<string, { top: number; page: number; cfi?: string }>;
+  annotations: Record<string, EPUBAnnotation[]>;
+  workspace?: string | null;
 };
 export type StudioAPI = {
   openFile: () => Promise<OpenFile | null>;
@@ -45,6 +71,11 @@ export type StudioAPI = {
     files: { name: string; path: string }[];
   } | null>;
   openPath: (path: string) => Promise<OpenFile>;
+  createWorkspace: (name: string) => Promise<WorkspaceProject | null>;
+  chooseWorkspace: () => Promise<WorkspaceProject | null>;
+  openWorkspace: (path: string) => Promise<WorkspaceProject>;
+  importWorkspaceFiles: (manifestPath: string) => Promise<WorkspaceProject | null>;
+  trashWorkspaceFile: (manifestPath: string, filePath: string) => Promise<WorkspaceProject>;
   saveNote: (
     id: string | null,
     text: string,

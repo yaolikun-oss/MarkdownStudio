@@ -293,6 +293,15 @@ button.side-item small {
   border-bottom: 1px solid var(--border);
   background: #fff;
 }
+#open-document-tabs{display:flex;gap:3px;min-width:0;overflow-x:auto;scrollbar-width:thin;flex:1}
+.document-tab{display:flex;align-items:center;gap:8px;max-width:230px;min-width:90px;padding:5px 8px!important;border-radius:6px!important;background:transparent!important;border:1px solid transparent!important}
+.document-tab>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.document-tab.selected{background:#e8f1ff!important;border-color:#c9dcf5!important;color:#145ea8}
+.tab-close{font-size:15px;opacity:.58;margin-left:auto}.tab-close:hover{opacity:1;color:#b42318}
+.annotation-list{display:grid;gap:10px;max-height:55vh;overflow:auto;min-width:min(560px,75vw)}
+.annotation-row{border:1px solid #d9dee7;border-radius:8px;padding:10px;background:#fafbfc}
+.annotation-row blockquote{margin:0 0 8px;border-left:3px solid #e2b93b;padding-left:10px;color:#4b5563}
+.annotation-row p{white-space:pre-wrap}.annotation-row>div{display:flex;gap:8px;justify-content:flex-end}
 #workspace-tabs {
   display: flex;
   background: #f0f3f5;

@@ -4,7 +4,7 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import ePub from "epubjs";
 import { renderAsync } from "docx-preview";
-import type { OpenFile, Style } from "./types";
+import type { EPUBAnnotation, OpenFile, Style } from "./types";
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 type Location = { top: number; page: number; cfi?: string };
@@ -47,6 +47,9 @@ export class Reader {
   private tasks = new Set<pdfjs.RenderTask>();
   private book: any = null;
   private rendition: any = null;
+  private annotations: EPUBAnnotation[] = [];
+  private epubSectionIndex = 0;
+  private epubSectionNavigation = false;
   private observer: IntersectionObserver | null = null;
   private file: OpenFile | null = null;
   private pageElements: HTMLElement[] = [];
@@ -64,6 +67,7 @@ export class Reader {
     ) => void,
     readonly onPage: (page: number, total: number) => void,
     readonly onFocus: () => void,
+    readonly onSelection: (selection: { cfi: string; quote: string } | null) => void,
   ) {
     host.addEventListener("pointerdown", () => onFocus());
     host.addEventListener(
@@ -97,6 +101,9 @@ export class Reader {
     this.book?.destroy();
     this.book = null;
     this.rendition = null;
+    this.onSelection(null);
+    this.epubSectionIndex = 0;
+    this.epubSectionNavigation = false;
     this.host.replaceChildren();
     this.file = null;
     this.pageElements = [];
@@ -163,7 +170,8 @@ export class Reader {
       this.rendition = this.book.renderTo(target, {
         width: "100%",
         height: "100%",
-        flow: "paginated",
+        manager: "default",
+        flow: "scrolled-doc",
         spread: "none",
         allowScriptedContent: false,
         allowPopups: false,
@@ -183,7 +191,14 @@ export class Reader {
       this.epubResize.observe(target);
       this.rendition.on("relocated", (location: any) => {
         this.cfi = location.start.cfi;
-        this.currentPage = (location.start.index ?? 0) + 1;
+        this.epubSectionIndex = Math.max(
+          0,
+          Math.min(
+            this.book.spine.items.length - 1,
+            location.start.index ?? this.epubSectionIndex,
+          ),
+        );
+        this.currentPage = this.epubSectionIndex + 1;
         this.onPage(this.currentPage, this.book.spine.items.length);
         this.onLocation(this.location());
       });
@@ -204,7 +219,24 @@ export class Reader {
         }
       });
       this.rendition.on("click", () => this.onFocus());
-      await this.rendition.display(position?.cfi || undefined);
+      this.rendition.on("selected", (cfi: string, contents: any) => {
+        const quote = String(contents?.window?.getSelection?.()?.toString?.() ?? "").trim();
+        this.onSelection(quote ? { cfi, quote } : null);
+        this.onFocus();
+      });
+      this.rendition.on("rendered", () => this.applyAnnotations());
+      const savedSection = Math.max(
+        0,
+        Math.min(
+          this.book.spine.items.length - 1,
+          (position?.page ?? 1) - 1,
+        ),
+      );
+      this.epubSectionIndex = savedSection;
+      const savedTarget =
+        position?.cfi || this.book.spine.items[savedSection]?.href;
+      await this.rendition.display(savedTarget || undefined);
+      this.applyAnnotations();
     } else if (file.format === "docx") {
       const bytes = await window.studio.readBytes(file.id);
       if (generation !== this.generation) return;
@@ -523,7 +555,7 @@ export class Reader {
     }
   }
   async previous() {
-    if (this.rendition) await this.rendition.prev();
+    if (this.rendition) await this.moveEPUBSection(-1);
     else if (this.pdf || this.documentBody) this.goPage(this.currentPage - 1);
     else
       this.host.scrollBy({
@@ -532,7 +564,7 @@ export class Reader {
       });
   }
   async next() {
-    if (this.rendition) await this.rendition.next();
+    if (this.rendition) await this.moveEPUBSection(1);
     else if (this.pdf || this.documentBody) this.goPage(this.currentPage + 1);
     else
       this.host.scrollBy({
@@ -543,6 +575,51 @@ export class Reader {
   async chapter(href: string) {
     if (this.pdf && href.startsWith("pdf:")) this.goPage(Number(href.slice(4)));
     else if (this.rendition) await this.rendition.display(href);
+  }
+  private async moveEPUBSection(offset: -1 | 1) {
+    if (!this.rendition || !this.book || this.epubSectionNavigation) return;
+    const next = this.epubSectionIndex + offset;
+    if (next < 0 || next >= this.book.spine.items.length) return;
+    const href = this.book.spine.items[next]?.href;
+    if (!href) return;
+    const previous = this.epubSectionIndex;
+    this.epubSectionNavigation = true;
+    try {
+      this.epubSectionIndex = next;
+      this.currentPage = next + 1;
+      this.cfi = undefined;
+      await this.rendition.display(href);
+    } catch (error) {
+      this.epubSectionIndex = previous;
+      this.currentPage = previous + 1;
+      throw error;
+    } finally {
+      this.epubSectionNavigation = false;
+    }
+  }
+  setAnnotations(value: EPUBAnnotation[]) {
+    this.annotations = value.map((item) => ({ ...item }));
+    this.applyAnnotations();
+  }
+  private applyAnnotations() {
+    if (!this.rendition?.annotations) return;
+    for (const annotation of this.annotations) {
+      const type = annotation.style === "underline" ? "underline" : "highlight";
+      const styles =
+        type === "underline"
+          ? { "border-bottom": `2px solid ${annotation.color}`, "background-color": "transparent" }
+          : { fill: annotation.color, "fill-opacity": "0.38", "mix-blend-mode": "multiply" };
+      try {
+        this.rendition.annotations.remove(annotation.cfi, "highlight");
+        this.rendition.annotations.remove(annotation.cfi, "underline");
+        this.rendition.annotations[type](annotation.cfi, { id: annotation.id }, undefined, `studio-${type}`, styles);
+      } catch {}
+    }
+  }
+  async jumpAnnotation(annotation: EPUBAnnotation) {
+    if (!this.rendition) return;
+    await this.rendition.display(annotation.cfi);
+    this.focus();
   }
   focus() {
     if (this.rendition) {

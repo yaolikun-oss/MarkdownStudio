@@ -3,7 +3,7 @@ import { drag } from "./splitter";
 import "./style.css";
 import { MarkdownEditors } from "./markdown";
 import { Reader } from "./readers";
-import type { OpenFile, Preferences, Style } from "./types";
+import type { EPUBAnnotation, OpenFile, Preferences, Style, WorkspaceProject } from "./types";
 
 const api = window.studio;
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
@@ -12,10 +12,10 @@ const app = $("app");
 app.innerHTML = `
 <nav id="rail" aria-label="功能栏"><div class="brand" title="Markdown Studio">M<span>·</span></div>
 <button data-side="files" title="文件与最近使用" aria-label="文件与最近使用">▱</button><button data-side="reading" title="原文目录" aria-label="原文目录">▤</button><button data-side="outline" title="Markdown 目录" aria-label="Markdown 目录">☷</button><button data-side="bookmarks" title="网页收藏" aria-label="网页收藏">☆</button><div class="rail-spacer"></div><button id="settings" title="样式设置" aria-label="样式设置">⚙</button></nav>
-<aside id="sidebar"><header><span id="side-title">文件</span><button id="hide-sidebar" title="收起侧栏">‹</button></header><div class="file-actions"><button id="open-file" title="打开文件 Ctrl+O">打开文件</button><button id="open-folder" title="打开文件夹 Ctrl+Shift+O">文件夹</button><button id="new-note" title="新建笔记 Ctrl+N">＋ 笔记</button></div><div id="side-content"></div><footer>Markdown Studio <b>Windows</b><span>0.1.3 · 预览版</span></footer></aside><div id="side-resizer" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div>
+<aside id="sidebar"><header><span id="side-title">工程</span><button id="hide-sidebar" title="收起侧栏">‹</button></header><div class="file-actions"><button id="new-workspace" title="以学习主题新建 Workspace">新建工程</button><button id="open-workspace" title="打开 .mdworkspace 工程">打开工程</button><button id="import-workspace" title="把资料复制到当前工程" disabled>导入资料</button><button id="open-file" title="临时打开文件 Ctrl+O">打开文件</button><button id="open-folder" hidden title="打开普通文件夹 Ctrl+Shift+O">文件夹</button><button id="new-note" title="新建笔记 Ctrl+N">＋ 笔记</button></div><div id="side-content"></div><footer>Markdown Studio <b>Windows</b><span>0.2.0 · 预览版</span></footer></aside><div id="side-resizer" role="separator" aria-label="调整侧栏宽度" tabindex="0"></div>
 <div id="main"><header id="topbar"><button id="show-sidebar" title="展开侧栏" hidden>☰</button><div class="document-title"><span id="window-title">阅读，思考，写下笔记</span><span id="dirty-dot" hidden>未保存</span></div><button id="save" title="保存 Ctrl+S" disabled>保存</button><button id="close-reading" disabled>关闭原文</button><button id="close-note" disabled>关闭笔记</button><div class="toolbar-spacer"></div><button id="layout">切换显示</button><button id="open-web">打开网页</button><button id="style">样式</button></header>
-<div id="modebar"><div id="workspace-tabs"><button id="tab-reading">阅读原文</button><button id="tab-note">Markdown 笔记</button></div><span id="layout-label">原文与笔记，并排思考</span><span class="shortcut">Ctrl+Shift+R 切换阅读 / 编辑</span></div>
-<section id="workspace"><article id="reading-pane" class="pane"><header class="pane-bar"><span id="reading-title">阅读原文</span><div class="toolbar-spacer"></div><button id="read-prev" title="上一页">‹</button><input id="page" value="1" aria-label="阅读页码" inputmode="numeric"><span id="page-total">/ 1</span><button id="read-next" title="下一页">›</button><button id="zoom-out" title="缩小原文">−</button><input id="zoom" value="100" aria-label="阅读缩放百分比" inputmode="numeric"><span>%</span><button id="zoom-in" title="放大原文">＋</button><button id="fit-width" title="根据当前阅读区域重新计算页宽">适宽</button><button id="fit-height" title="根据当前阅读区域重新计算页高">适高</button><button id="fit-best" title="每次重新计算：扫描页原图像素 1:1，其他页面完整显示">最佳显示</button><button id="reading-max" title="最大化原文面板">⤢ 满屏</button></header>
+<div id="modebar"><div id="workspace-tabs"><button id="tab-reading">阅读原文</button><button id="tab-note">Markdown 笔记</button></div><div id="open-document-tabs" aria-label="已打开文档"></div><span id="layout-label">原文与笔记，并排思考</span><span class="shortcut">Ctrl+Shift+R 切换阅读 / 编辑</span></div>
+<section id="workspace"><article id="reading-pane" class="pane"><header class="pane-bar"><span id="reading-title">阅读原文</span><div class="toolbar-spacer"></div><button id="read-prev" title="上一页">‹</button><input id="page" value="1" aria-label="阅读页码" inputmode="numeric"><span id="page-total">/ 1</span><button id="read-next" title="下一页">›</button><button id="add-annotation" title="选中 EPUB 原文后添加备注 Ctrl+Alt+M" disabled>标记</button><button id="show-annotations" title="查看当前 EPUB 的备注 Ctrl+Alt+Shift+M" disabled>备注 <span id="annotation-count">0</span></button><button id="zoom-out" title="缩小原文">−</button><input id="zoom" value="100" aria-label="阅读缩放百分比" inputmode="numeric"><span>%</span><button id="zoom-in" title="放大原文">＋</button><button id="fit-width" title="根据当前阅读区域重新计算页宽">适宽</button><button id="fit-height" title="根据当前阅读区域重新计算页高">适高</button><button id="fit-best" title="每次重新计算：扫描页原图像素 1:1，其他页面完整显示">最佳显示</button><button id="reading-max" title="最大化原文面板">⤢ 满屏</button></header>
 <div id="webbar" hidden><button id="web-back" title="网页后退">‹</button><button id="web-forward" title="网页前进">›</button><button id="web-reload" title="重新加载网页">↻</button><form id="address-form"><input id="address" placeholder="输入网址，如 example.com" aria-label="网页地址"></form><button id="bookmark" title="收藏网页">☆</button><button id="clip" title="将网页选中文字附加到笔记">剪藏</button></div>
 <div id="reading-body" tabindex="0" aria-label="原文阅读区"><div class="empty"><span class="empty-symbol">▤</span><h1>让阅读留下思考</h1><p>打开 PDF、EPUB 或 Word 文档，<br>在旁边写下自己的 Markdown 笔记。</p><button class="primary" data-action="open">打开阅读文件</button></div></div><div id="web-surface" hidden></div><div id="reading-status" role="status"></div></article>
 <div id="splitter" class="splitter" role="separator" aria-label="调整阅读与笔记比例" tabindex="0"></div>
@@ -39,6 +39,9 @@ let side = "files";
 let sidebarHidden = false;
 let folder: { name: string; files: { name: string; path: string }[] } | null =
   null;
+let workspaceProject: WorkspaceProject | null = null;
+let openTabs: { path: string; name: string; kind: "note" | "reading" }[] = [];
+let epubSelection: { cfi: string; quote: string } | null = null;
 let toc: { title: string; href: string; depth: number }[] = [];
 let modal = false;
 let queue = Promise.resolve();
@@ -50,6 +53,8 @@ let savedVersion = 0;
 const hasNote = () => !!note || untitled;
 const hasReading = () => !!reading || !!website;
 const isDirty = () => hasNote() && noteVersion !== savedVersion;
+const currentAnnotations = () =>
+  reading?.format === "epub" ? prefs.annotations[reading.path] ?? [] : [];
 function notify(message: string) {
   const box = $("notification");
   box.querySelector("span")!.textContent = message;
@@ -190,9 +195,15 @@ const reader = new Reader(
   (page, total) => {
     $<HTMLInputElement>("page").value = String(page);
     $("page-total").textContent = `/ ${total}`;
+    $<HTMLButtonElement>("read-prev").disabled = page <= 1;
+    $<HTMLButtonElement>("read-next").disabled = page >= total;
   },
   () => {
     active = "reading";
+    renderToolbar();
+  },
+  (selection) => {
+    epubSelection = selection;
     renderToolbar();
   },
 );
@@ -269,6 +280,13 @@ async function allowDiscard() {
   if (answer === "discard") await api.recovery(null);
   return answer === "discard";
 }
+function rememberTab(file: OpenFile) {
+  const tab = { path: file.path, name: file.name, kind: file.kind } as const;
+  openTabs = [
+    ...openTabs.filter((item) => item.path !== file.path),
+    tab,
+  ].slice(-30);
+}
 async function adopt(file: OpenFile) {
   if (file.kind === "note") {
     if (note?.path === file.path) return;
@@ -284,6 +302,7 @@ async function adopt(file: OpenFile) {
     selectedTab = "note";
     active = "note";
     maximized = null;
+    rememberTab(file);
     remember();
     render();
     status(`已打开笔记：${file.name}`);
@@ -295,10 +314,12 @@ async function adopt(file: OpenFile) {
     selectedTab = "reading";
     active = "reading";
     maximized = null;
+    rememberTab(file);
     render();
     status(file.converted ? "正在打开转换后的阅读副本…" : "正在打开原文…");
     reader.setStyle(prefs.styles.reading);
     await reader.open(file, prefs.readingZoom, prefs.positions[file.path]);
+    reader.setAnnotations(currentAnnotations());
     remember();
     render();
     status(file.converted ? "格式已转换为阅读副本，原文件未改动" : "就绪");
@@ -307,6 +328,140 @@ async function adopt(file: OpenFile) {
 async function open() {
   const file = await api.openFile();
   if (file) await adopt(file);
+}
+async function useWorkspace(project: WorkspaceProject) {
+  if (!(await allowDiscard())) return;
+  savePosition();
+  reader.clear();
+  reading = null;
+  website = "";
+  note = null;
+  untitled = false;
+  noteVersion = 0;
+  savedVersion = 0;
+  openTabs = [];
+  editors.setFile("", null);
+  workspaceProject = project;
+  prefs.workspace = project.manifestPath;
+  folder = null;
+  side = "files";
+  sidebarHidden = false;
+  persist();
+  render();
+  const home = project.files.find(
+    (file) => file.kind === "note" && /(^|[\\/])主笔记\.md$/i.test(file.relativePath),
+  );
+  if (home) await adopt(await api.openPath(home.path));
+}
+async function newWorkspace() {
+  const result = ask(
+    "新建学习 Workspace",
+    '<label class="field">主题名称<input id="workspace-name" maxlength="100" placeholder="例如：汉娜·阿伦特研究" autofocus></label><p class="muted">程序会建立主题文件夹、阅读资料、笔记、网页和主笔记；之后导入的原书会复制进工程，不依赖外部原件。</p>',
+    [
+      { label: "取消", value: "cancel" },
+      { label: "选择位置并创建", value: "create", primary: true },
+    ],
+  );
+  if ((await result) !== "create") return;
+  const project = await api.createWorkspace($<HTMLInputElement>("workspace-name").value);
+  if (project) await useWorkspace(project);
+}
+async function openWorkspace() {
+  const project = await api.chooseWorkspace();
+  if (project) await useWorkspace(project);
+}
+async function importWorkspace() {
+  if (!workspaceProject) return;
+  const result = await api.importWorkspaceFiles(workspaceProject.manifestPath);
+  if (!result) return;
+  workspaceProject = result;
+  render();
+  status("资料已复制到当前 Workspace");
+}
+async function editAnnotation(existing?: EPUBAnnotation) {
+  if (reading?.format !== "epub") return;
+  const anchor = existing ?? epubSelection;
+  if (!anchor) {
+    notify("请先在 EPUB 原文中选中一段文字。");
+    return;
+  }
+  const promise = ask(
+    existing ? "修改 EPUB 备注" : "添加 EPUB 备注",
+    `<blockquote>${escape(anchor.quote)}</blockquote><label class="field">备注<textarea id="annotation-note" rows="5" placeholder="可只做高亮，也可以写下说明"></textarea></label><div class="style-grid"><label class="field">标记方式<select id="annotation-style"><option value="highlight">高亮</option><option value="underline">下划线</option></select></label><label class="field">颜色<input id="annotation-color" type="color" value="#ffe58f"></label></div>`,
+    [
+      { label: "取消", value: "cancel" },
+      { label: "保存", value: "save", primary: true },
+    ],
+  );
+  $<HTMLTextAreaElement>("annotation-note").value = existing?.note ?? "";
+  $<HTMLSelectElement>("annotation-style").value = existing?.style ?? "highlight";
+  $<HTMLInputElement>("annotation-color").value = existing?.color ?? "#ffe58f";
+  if ((await promise) !== "save" || reading?.format !== "epub") {
+    reader.focus();
+    return;
+  }
+  const now = Date.now();
+  const annotation: EPUBAnnotation = {
+    id: existing?.id ?? crypto.randomUUID(),
+    cfi: anchor.cfi,
+    quote: anchor.quote,
+    note: $<HTMLTextAreaElement>("annotation-note").value.trim(),
+    style: $<HTMLSelectElement>("annotation-style").value === "underline" ? "underline" : "highlight",
+    color: $<HTMLInputElement>("annotation-color").value,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  const values = currentAnnotations().filter((item) => item.id !== annotation.id);
+  prefs.annotations[reading.path] = [...values, annotation];
+  epubSelection = null;
+  reader.setAnnotations(prefs.annotations[reading.path]);
+  persist();
+  renderToolbar();
+  reader.focus();
+}
+async function showAnnotations() {
+  if (reading?.format !== "epub") return;
+  const values = currentAnnotations();
+  const rows = values.length
+    ? values
+        .map(
+          (item) =>
+            `<article class="annotation-row"><blockquote>${escape(item.quote)}</blockquote>${item.note ? `<p>${escape(item.note)}</p>` : ""}<div><button type="button" data-jump="${item.id}">跳转</button><button type="button" data-edit="${item.id}">修改</button><button type="button" data-delete="${item.id}">删除</button></div></article>`,
+        )
+        .join("")
+    : '<p class="side-empty">还没有备注。选中 EPUB 原文后点击“标记”。</p>';
+  const promise = ask("EPUB 备注", `<div class="annotation-list">${rows}</div>`, [
+    { label: "完成", value: "done", primary: true },
+  ]);
+  for (const button of Array.from(document.querySelectorAll<HTMLButtonElement>("[data-jump],[data-edit],[data-delete]"))) {
+    button.onclick = () => {
+      const action = button.dataset.jump ? "jump" : button.dataset.edit ? "edit" : "delete";
+      const id = button.dataset.jump ?? button.dataset.edit ?? button.dataset.delete;
+      $<HTMLDialogElement>("dialog").close(`${action}:${id}`);
+    };
+  }
+  const result = await promise;
+  const [action, id] = result.split(":", 2);
+  const annotation = values.find((item) => item.id === id);
+  if (annotation && action === "jump") await reader.jumpAnnotation(annotation);
+  else if (annotation && action === "edit") await editAnnotation(annotation);
+  else if (annotation && action === "delete" && reading?.format === "epub") {
+    const confirm = await ask(
+      "删除这条 EPUB 备注？",
+      `<blockquote>${escape(annotation.quote)}</blockquote>`,
+      [
+        { label: "取消", value: "cancel" },
+        { label: "删除", value: "delete", primary: true },
+      ],
+    );
+    if (confirm === "delete") {
+      prefs.annotations[reading.path] = values.filter((item) => item.id !== annotation.id);
+      reader.setAnnotations(prefs.annotations[reading.path]);
+      persist();
+      renderToolbar();
+    }
+  }
+  reader.focus();
 }
 async function createNote() {
   if (!(await allowDiscard())) return;
@@ -452,6 +607,47 @@ async function openWeb() {
     if (value.trim()) await navigate(value.trim());
   }
 }
+async function switchDocumentTab(path: string) {
+  if (note?.path === path || reading?.path === path) return;
+  await adopt(await api.openPath(path));
+}
+async function closeDocumentTab(path: string) {
+  const target = openTabs.find((item) => item.path === path);
+  if (!target) return;
+  if (reading?.path === path) await closeReading();
+  else if (note?.path === path) {
+    await closeNote();
+    if (note?.path === path) return;
+  }
+  openTabs = openTabs.filter((item) => item.path !== path);
+  const fallback = [...openTabs].reverse().find((item) => item.kind === target.kind);
+  if (fallback) await switchDocumentTab(fallback.path);
+  render();
+}
+function renderOpenTabs() {
+  const root = $("open-document-tabs");
+  root.replaceChildren();
+  for (const tab of openTabs) {
+    const button = document.createElement("button");
+    button.className = "document-tab";
+    button.classList.toggle("selected", note?.path === tab.path || reading?.path === tab.path);
+    button.title = tab.path;
+    const label = document.createElement("span");
+    label.textContent = tab.name;
+    const close = document.createElement("span");
+    close.className = "tab-close";
+    close.textContent = "×";
+    close.title = `关闭 ${tab.name}`;
+    close.onclick = (event) => {
+      event.stopPropagation();
+      void run(() => closeDocumentTab(tab.path));
+    };
+    button.append(label, close);
+    button.onclick = () => void run(() => switchDocumentTab(tab.path));
+    root.append(button);
+  }
+  root.hidden = openTabs.length === 0;
+}
 function renderToolbar() {
   $("dirty-dot").hidden = !isDirty();
   $<HTMLButtonElement>("save").disabled = !hasNote();
@@ -476,6 +672,11 @@ function renderToolbar() {
   $("tab-note").classList.toggle("selected", selectedTab === "note");
   $("note-pane").classList.toggle("active", active === "note");
   $("reading-pane").classList.toggle("active", active === "reading");
+  const epub = reading?.format === "epub";
+  $<HTMLButtonElement>("add-annotation").disabled = !epub || !epubSelection;
+  $<HTMLButtonElement>("show-annotations").disabled = !epub;
+  $("annotation-count").textContent = String(currentAnnotations().length);
+  renderOpenTabs();
 }
 function render() {
   if (!prefs) return;
@@ -504,6 +705,13 @@ function render() {
   $("webbar").hidden = !website;
   $<HTMLInputElement>("page").disabled =
     !reading || !["pdf", "docx"].includes(reading.format);
+  const epubReading = reading?.format === "epub";
+  $("read-prev").title = epubReading ? "上一节（←）" : "上一页";
+  $("read-next").title = epubReading ? "下一节（→）" : "下一页";
+  $("page").setAttribute(
+    "aria-label",
+    epubReading ? "EPUB 章节位置" : "阅读页码",
+  );
   $("page-total").hidden = !!website;
   $("fit-width").hidden = reading?.format !== "pdf";
   $("fit-height").hidden = reading?.format !== "pdf";
@@ -586,7 +794,50 @@ function renderSidebar() {
     root.append(el);
   };
   if (side === "files") {
-    if (folder) {
+    $<HTMLButtonElement>("import-workspace").disabled = !workspaceProject;
+    if (workspaceProject) {
+      heading(workspaceProject.name);
+      const groups = new Map<string, typeof workspaceProject.files>();
+      for (const file of workspaceProject.files) {
+        const group = file.relativePath.split(/[\\/]/)[0] || "其它";
+        groups.set(group, [...(groups.get(group) ?? []), file]);
+      }
+      for (const [group, files] of groups) {
+        heading(group);
+        for (const file of files) {
+          const relative = file.relativePath.split(/[\\/]/).slice(1).join(" / ") || file.name;
+          const button = itemButton(
+            relative,
+            file.kind === "reading" ? "阅读资料" : "Markdown 笔记",
+            () => void run(async () => adopt(await api.openPath(file.path))),
+            1,
+          );
+          button.title = `${file.relativePath}\n右键可移到回收站`;
+          button.oncontextmenu = (event) => {
+            event.preventDefault();
+            void run(async () => {
+              const result = await ask(
+                "将文件移到回收站？",
+                `<p>“${escape(file.relativePath)}”将从当前 Workspace 移到系统回收站。</p>`,
+                [
+                  { label: "取消", value: "cancel" },
+                  { label: "移到回收站", value: "trash", primary: true },
+                ],
+              );
+              if (result !== "trash" || !workspaceProject) return;
+              if (note?.path === file.path || reading?.path === file.path) {
+                await closeDocumentTab(file.path);
+                if (note?.path === file.path || reading?.path === file.path) return;
+              }
+              workspaceProject = await api.trashWorkspaceFile(workspaceProject.manifestPath, file.path);
+              openTabs = openTabs.filter((tab) => tab.path !== file.path);
+              render();
+            });
+          };
+          root.append(button);
+        }
+      }
+    } else if (folder) {
       heading(folder.name);
       for (const file of folder.files)
         root.append(
@@ -597,7 +848,7 @@ function renderSidebar() {
           ),
         );
     }
-    heading("最近使用");
+    heading(workspaceProject ? "最近使用" : "最近使用 · 可先新建或打开 Workspace");
     if (!prefs.recent.length) {
       const p = document.createElement("p");
       p.className = "side-empty";
@@ -867,7 +1118,11 @@ const commands: Record<string, () => Promise<void> | void> = {
     if ((await answer) === "find")
       editors.find($<HTMLInputElement>("find-text").value);
   },
-  "close-active": () => (active === "reading" ? closeReading() : closeNote()),
+  "close-active": () => {
+    if (active === "reading" && reading?.path) return closeDocumentTab(reading.path);
+    if (active === "note" && note?.path) return closeDocumentTab(note.path);
+    return active === "reading" ? closeReading() : closeNote();
+  },
   "close-window": async () => {
     if (await allowDiscard()) {
       savePosition();
@@ -887,12 +1142,17 @@ bind("fit-best", async () => {
   await zoom(result.zoom);
   notify(result.reason);
 });
+bind("new-workspace", newWorkspace);
+bind("open-workspace", openWorkspace);
+bind("import-workspace", importWorkspace);
 bind("open-file", open);
 bind("open-folder", commands.folder);
 bind("new-note", createNote);
 bind("save", commands.save);
-bind("close-reading", closeReading);
-bind("close-note", closeNote);
+bind("close-reading", () =>
+  reading?.path ? closeDocumentTab(reading.path) : closeReading(),
+);
+bind("close-note", () => (note?.path ? closeDocumentTab(note.path) : closeNote()));
 bind("layout", changeLayout);
 bind("open-web", openWeb);
 bind("style", settings);
@@ -905,6 +1165,8 @@ bind("visual-mode", () => switchMode("visual"));
 bind("source-mode", () => switchMode("source"));
 bind("read-prev", () => reader.previous());
 bind("read-next", () => reader.next());
+bind("add-annotation", () => editAnnotation());
+bind("show-annotations", showAnnotations);
 bind("zoom-in", () => zoom(prefs.readingZoom + 10));
 bind("zoom-out", () => zoom(prefs.readingZoom - 10));
 bind("hide-sidebar", () => {
@@ -1073,6 +1335,17 @@ $("note-content").addEventListener(
 );
 window.addEventListener("keydown", (event) => {
   if (modal) return;
+  if (
+    active === "reading" &&
+    reading?.format === "epub" &&
+    event.ctrlKey &&
+    event.altKey &&
+    event.key.toLowerCase() === "m"
+  ) {
+    event.preventDefault();
+    void run(() => (event.shiftKey ? showAnnotations() : editAnnotation()));
+    return;
+  }
   if (event.key === "Escape" && maximized) {
     maximized = null;
     render();
@@ -1082,9 +1355,11 @@ window.addEventListener("keydown", (event) => {
     active === "reading" &&
     reading?.format === "epub" &&
     ["ArrowLeft", "ArrowRight"].includes(event.key) &&
-    !(event.target as HTMLElement).closest(
-      "input,textarea,[contenteditable=true]",
-    )
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !event.metaKey &&
+    !(event.target as HTMLElement).closest("input,textarea,[contenteditable=true]")
   ) {
     event.preventDefault();
     void run(() =>
@@ -1110,6 +1385,14 @@ async function init() {
     return;
   }
   prefs = await api.preferences();
+  if (prefs.workspace) {
+    try {
+      workspaceProject = await api.openWorkspace(prefs.workspace);
+    } catch {
+      prefs.workspace = null;
+      persist();
+    }
+  }
   editors.setFile("", null);
   render();
   const recovery = await api.readRecovery();

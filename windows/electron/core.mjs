@@ -128,6 +128,39 @@ export function normalizePreferences(input = {}) {
               ]),
           )
         : {},
+    annotations:
+      input.annotations && typeof input.annotations === "object"
+        ? Object.fromEntries(
+            Object.entries(input.annotations)
+              .slice(-100)
+              .map(([file, values]) => [
+                file,
+                (Array.isArray(values) ? values : [])
+                  .filter(
+                    (x) =>
+                      x &&
+                      typeof x.id === "string" &&
+                      typeof x.cfi === "string" &&
+                      typeof x.quote === "string",
+                  )
+                  .slice(-1000)
+                  .map((x) => ({
+                    id: x.id.slice(0, 100),
+                    cfi: x.cfi.slice(0, 4000),
+                    quote: x.quote.slice(0, 4000),
+                    note: typeof x.note === "string" ? x.note.slice(0, 20000) : "",
+                    color: /^#[0-9a-f]{6}$/i.test(x.color) ? x.color : "#ffe58f",
+                    style: x.style === "underline" ? "underline" : "highlight",
+                    createdAt: size(x.createdAt, Date.now(), 0, 9e15),
+                    updatedAt: size(x.updatedAt, Date.now(), 0, 9e15),
+                  })),
+              ]),
+          )
+        : {},
+    workspace:
+      typeof input.workspace === "string" && input.workspace.length < 32768
+        ? input.workspace
+        : null,
   };
 }
 export async function atomicWrite(file, bytes) {

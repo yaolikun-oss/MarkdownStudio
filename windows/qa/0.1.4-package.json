@@ -1,0 +1,12 @@
+{
+  "version": "0.1.4",
+  "target": "win32-x64",
+  "bytes": 156148631,
+  "sha256": "f458e4cd564badea1bccc489f991b451e43eec054c0b3645b3babc3466bfb110",
+  "zipIntegrity": "passed",
+  "PEMachine": "0x8664",
+  "nativeWindowsExecution": "NOT_TESTED",
+  "codeSigning": "UNSIGNED_PREVIEW",
+  "productionBuild": "passed",
+  "automatedTests": "NOT_RUN_FOR_THIS_CHANGE"
+}

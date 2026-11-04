@@ -1,19 +1,21 @@
 {
-  "version": "0.1.3",
-  "date": "2026-10-22",
-  "bytes": 156147549,
-  "sha256": "9d3cabc14d23d6f213cf0aa7a44ee262566f0024a3e2fc27a7e999067803dd0d",
-  "tests": {
-    "passed": 33,
-    "failed": 0,
-    "skipped": 0
-  },
+  "version": "0.2.0",
+  "date": "2026-11-04",
+  "bytes": 156156828,
+  "sha256": "6b16dafe2fc52bdd710990154524a02b9af0aed26e785ef0925e27b7f6edfbee",
+  "tests": "34 passed, 0 failed, 0 skipped",
+  "productionBuild": "passed",
+  "zipIntegrity": "passed",
   "nativeWindowsExecution": "NOT_TESTED",
+  "epubContinuousScrollUI": "passed in macOS QA shell",
+  "workspaceUI": "passed in isolated macOS QA shell",
+  "multipleDocumentTabsUI": "passed in isolated macOS QA shell",
+  "epubAnnotationsUI": "passed including close, reopen and app relaunch",
   "macInterfaceChecks": [
     "EPUB background and max width",
     "independent heading controls",
     "vector PDF dynamic best display",
     "raster PDF native-pixel best display"
   ],
-  "file": "windows/release/MarkdownStudio-Windows-0.1.3-x64.zip"
+  "file": "windows/release/MarkdownStudio-Windows-0.2.0-x64.zip"
 }

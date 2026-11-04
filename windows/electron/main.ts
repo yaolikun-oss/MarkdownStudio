@@ -8,6 +8,7 @@ import {
   protocol,
   net,
   session,
+  shell,
 } from "electron";
 import type { IpcMainInvokeEvent } from "electron";
 import fs from "node:fs/promises";
@@ -27,7 +28,7 @@ import {
   assetPath,
   webURL,
 } from "./core.mjs";
-import type { OpenFile, Preferences } from "../src/types";
+import type { OpenFile, Preferences, WorkspaceFile, WorkspaceProject } from "../src/types";
 const run = promisify(execFile);
 protocol.registerSchemesAsPrivileged([
   {
@@ -226,6 +227,116 @@ async function chooseFile() {
   });
   if (result.canceled) return null;
   return openFile(result.filePaths[0]);
+}
+
+const workspaceFolders = ["阅读资料", "笔记", "网页"] as const;
+function safeWorkspaceName(input: unknown) {
+  const name = String(input ?? "").trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").slice(0, 100);
+  if (!name || name === "." || name === "..") throw new Error("请输入有效的 Workspace 名称。");
+  return name;
+}
+async function scanWorkspace(manifestPath: string): Promise<WorkspaceProject> {
+  const manifest = path.resolve(manifestPath);
+  if (path.extname(manifest).toLowerCase() !== ".mdworkspace")
+    throw new Error("请选择 .mdworkspace 工程文件。");
+  const raw = JSON.parse(await fs.readFile(manifest, "utf8"));
+  if (raw?.version !== 1 || typeof raw.name !== "string")
+    throw new Error("Workspace 文件格式无效或版本不受支持。");
+  const root = path.dirname(manifest);
+  const files: WorkspaceFile[] = [];
+  async function walk(folder: string, depth: number) {
+    if (depth > 8 || files.length >= 10000) return;
+    for (const entry of await fs.readdir(folder, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) await walk(file, depth + 1);
+      else if (entry.isFile() && path.resolve(file) !== manifest) {
+        try {
+          const kind = supportedKind(file);
+          const format = path.extname(file).slice(1).toLowerCase();
+          allowed.add(path.resolve(file));
+          files.push({
+            name: entry.name,
+            path: path.resolve(file),
+            kind,
+            format,
+            relativePath: path.relative(root, file),
+          });
+        } catch {}
+      }
+    }
+  }
+  await walk(root, 0);
+  allowed.add(manifest);
+  return {
+    version: 1,
+    name: raw.name.slice(0, 100),
+    manifestPath: manifest,
+    root,
+    files: files.sort((a, b) => a.relativePath.localeCompare(b.relativePath, "zh-CN")),
+  };
+}
+async function createWorkspace(input: unknown) {
+  const name = safeWorkspaceName(input);
+  const result = await dialog.showOpenDialog(win, {
+    title: "选择新 Workspace 的上级文件夹",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  if (result.canceled) return null;
+  const root = path.join(result.filePaths[0], name);
+  try {
+    await fs.mkdir(root);
+  } catch (error: any) {
+    if (error?.code !== "EEXIST") throw error;
+    if ((await fs.readdir(root)).length)
+      throw new Error("同名文件夹已经存在且不为空，请换一个 Workspace 名称。");
+  }
+  for (const folder of workspaceFolders) await fs.mkdir(path.join(root, folder), { recursive: true });
+  const manifest = path.join(root, `${name}.mdworkspace`);
+  await atomicWrite(
+    manifest,
+    Buffer.from(JSON.stringify({ version: 1, name, createdAt: Date.now() }, null, 2)),
+  );
+  const home = path.join(root, "笔记", "主笔记.md");
+  await atomicWrite(
+    home,
+    Buffer.from(`# ${name}\n\n## 学习目标\n\n说明这个主题要解决的问题、范围和预期成果。\n\n## 资料与笔记\n\n在“阅读资料”中导入原书，在“笔记”中整理专题笔记。\n`),
+  );
+  return scanWorkspace(manifest);
+}
+async function chooseWorkspace() {
+  const result = await dialog.showOpenDialog(win, {
+    title: "打开 Markdown Studio Workspace",
+    properties: ["openFile"],
+    filters: [{ name: "Markdown Studio Workspace", extensions: ["mdworkspace"] }],
+  });
+  return result.canceled ? null : scanWorkspace(result.filePaths[0]);
+}
+async function importWorkspaceFiles(manifestPath: string) {
+  const project = await scanWorkspace(manifestPath);
+  const result = await dialog.showOpenDialog(win, {
+    title: "导入资料或笔记到 Workspace",
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "支持的文档", extensions: ["md", "markdown", "txt", "pdf", "epub", "docx", "doc", "pages", "mobi", "azw", "azw3"] }],
+  });
+  if (result.canceled) return null;
+  for (const source of result.filePaths) {
+    const kind = supportedKind(source);
+    const targetFolder = path.join(project.root, kind === "note" ? "笔记" : "阅读资料");
+    const ext = path.extname(source);
+    const stem = path.basename(source, ext);
+    let target = path.join(targetFolder, path.basename(source));
+    for (let index = 2; ; index++) {
+      try {
+        await fs.access(target);
+        target = path.join(targetFolder, `${stem} (${index})${ext}`);
+      } catch {
+        break;
+      }
+    }
+    await fs.copyFile(source, target);
+  }
+  return scanWorkspace(project.manifestPath);
 }
 async function sendOpen(file: string) {
   try {
@@ -480,6 +591,33 @@ async function start() {
     ]),
   );
   handle("file:choose", chooseFile);
+  handle("workspace:create", createWorkspace);
+  handle("workspace:choose", chooseWorkspace);
+  handle("workspace:open", (file: string) => {
+    if (typeof file !== "string") throw new Error("Workspace 路径无效。");
+    return scanWorkspace(file);
+  });
+  handle("workspace:import", (file: string) => {
+    if (typeof file !== "string") throw new Error("Workspace 路径无效。");
+    return importWorkspaceFiles(file);
+  });
+  handle("workspace:trash", async (manifestPath: string, filePath: string) => {
+    const project = await scanWorkspace(manifestPath);
+    const target = path.resolve(filePath);
+    const [realRoot, realTarget] = await Promise.all([
+      fs.realpath(project.root),
+      fs.realpath(target),
+    ]);
+    const relative = path.relative(realRoot, realTarget);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
+      throw new Error("只能删除当前 Workspace 内的文件。");
+    if (target === project.manifestPath) throw new Error("不能在工程打开期间删除 Workspace 文件。");
+    await shell.trashItem(realTarget);
+    registry.forEach((value, key) => {
+      if (value.path === target) registry.delete(key);
+    });
+    return scanWorkspace(project.manifestPath);
+  });
   handle("folder:choose", async () => {
     const result = await dialog.showOpenDialog(win, {
       properties: ["openDirectory"],

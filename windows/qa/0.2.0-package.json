@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "target": "win32-x64",
+  "bytes": 156156828,
+  "sha256": "6b16dafe2fc52bdd710990154524a02b9af0aed26e785ef0925e27b7f6edfbee",
+  "zipIntegrity": "passed",
+  "PEMachine": "0x8664",
+  "nativeWindowsExecution": "NOT_TESTED",
+  "codeSigning": "UNSIGNED_PREVIEW",
+  "productionBuild": "passed",
+  "productionAudit": "0 known vulnerabilities",
+  "automatedTests": "34 passed, 0 failed, 0 skipped",
+  "macQAShell": [
+    "workspace creation and relaunch",
+    "workspace file import",
+    "three document tabs and tab close/reopen",
+    "EPUB left/right chapter navigation",
+    "source editor arrow-key focus isolation",
+    "EPUB annotation add/list/persist after reopen and relaunch"
+  ],
+  "knownBoundary": "No native Windows execution; no arbitrary VS Code grid docking or detached-window redocking"
+}

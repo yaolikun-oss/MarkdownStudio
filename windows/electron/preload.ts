@@ -5,6 +5,12 @@ contextBridge.exposeInMainWorld("studio", {
   openFile: () => invoke("file:choose"),
   openFolder: () => invoke("folder:choose"),
   openPath: (path: string) => invoke("file:open", path),
+  createWorkspace: (name: string) => invoke("workspace:create", name),
+  chooseWorkspace: () => invoke("workspace:choose"),
+  openWorkspace: (path: string) => invoke("workspace:open", path),
+  importWorkspaceFiles: (manifestPath: string) => invoke("workspace:import", manifestPath),
+  trashWorkspaceFile: (manifestPath: string, filePath: string) =>
+    invoke("workspace:trash", manifestPath, filePath),
   saveNote: (id: string | null, text: string, saveAs = false) =>
     invoke("note:save", id, text, saveAs),
   readBytes: (id: string) => invoke("file:bytes", id),
